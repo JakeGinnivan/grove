@@ -137,13 +137,11 @@ describe('wt new', () => {
   })
 
   it('runs repo-defined setup commands in the new worktree', async () => {
+    // Read from the repo root (the `main` checkout), which is where the file
+    // is committed — not the parent directory, which is not version
+    // controlled and so could never hold a committed config.
     await writeFile(
       join(sandbox.mainPath, 'worktree.json'),
-      JSON.stringify({ 'setup-worktree': ['echo hi > setup-ran.txt'] }),
-    )
-    // The config is read from the repo parent, matching the shell helper.
-    await writeFile(
-      join(sandbox.repoPath, 'worktree.json'),
       JSON.stringify({ 'setup-worktree': ['echo hi > setup-ran.txt'] }),
     )
     const result = await runCli(
@@ -154,9 +152,22 @@ describe('wt new', () => {
     expect(existsSync(join(data.path, 'setup-ran.txt'))).toBe(true)
   })
 
-  it('skips setup commands with --no-setup', async () => {
+  it('ignores a config in the worktree parent directory', async () => {
     await writeFile(
       join(sandbox.repoPath, 'worktree.json'),
+      JSON.stringify({ 'setup-worktree': ['echo hi > setup-ran.txt'] }),
+    )
+    const result = await runCli(
+      ['new', 'demo', '--title', 'parent config', '--json'],
+      sandbox,
+    )
+    const data = result.json<{ path: string }>()
+    expect(existsSync(join(data.path, 'setup-ran.txt'))).toBe(false)
+  })
+
+  it('skips setup commands with --no-setup', async () => {
+    await writeFile(
+      join(sandbox.mainPath, 'worktree.json'),
       JSON.stringify({ 'setup-worktree': ['echo hi > setup-ran.txt'] }),
     )
     const result = await runCli(
@@ -653,8 +664,6 @@ describe('grove profile', () => {
         dir,
         '--description',
         'Internal work code',
-        '--block-push',
-        'github.com',
         '--rule',
         'Do not copy code out of this profile',
         '--json',
@@ -668,7 +677,6 @@ describe('grove profile', () => {
         name: string
         dir: string
         description: string | null
-        blockPushTo: string[]
         rules: string[]
       }[]
     }>()
@@ -677,17 +685,13 @@ describe('grove profile', () => {
       name: 'work',
       dir,
       description: 'Internal work code',
-      blockPushTo: ['github.com'],
       rules: ['Do not copy code out of this profile'],
     })
   })
 
-  it('routes a clone into the profile matching the URL host', async () => {
+  it('uses the only profile when just one is configured', async () => {
     const workDir = join(sandbox.root, 'work')
-    await runCli(
-      ['profile', 'add', 'work', workDir, '--host', 'demo.git', '--json'],
-      sandbox,
-    )
+    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
     const result = await runCli(
       ['clone', sandbox.remote, 'routed', '--no-alias', '--json'],
       sandbox,
@@ -697,7 +701,7 @@ describe('grove profile', () => {
     expect(data.path).toBe(join(workDir, 'routed'))
   })
 
-  it('honours an explicit --profile over host matching', async () => {
+  it('honours an explicit --profile over the default', async () => {
     const ossDir = join(sandbox.root, 'oss')
     await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
     await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
@@ -709,7 +713,7 @@ describe('grove profile', () => {
     expect(result.json<{ path: string }>().path).toBe(join(ossDir, 'chosen'))
   })
 
-  it('requires a profile when several exist and none matches', async () => {
+  it('requires a profile when several exist and no default is set', async () => {
     await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
     await runCli(['profile', 'add', 'oss', join(sandbox.root, 'oss'), '--json'], sandbox)
 
@@ -735,27 +739,73 @@ describe('grove profile', () => {
     expect(result.json<{ profile: string }>().profile).toBe('oss')
   })
 
-  it('refuses to clone a blocked host into that profile', async () => {
-    await runCli(
-      [
-        'profile',
-        'add',
-        'work',
-        join(sandbox.root, 'work'),
-        '--block-push',
-        'demo.git',
-        '--json',
-      ],
+  it('sets, shows, and clears the default with `profile default`', async () => {
+    const ossDir = join(sandbox.root, 'oss')
+    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
+
+    // Nothing set yet.
+    const initial = await runCli(['profile', 'default', '--json'], sandbox)
+    expect(initial.json<{ defaultProfile: string | null }>().defaultProfile).toBeNull()
+
+    const set = await runCli(['profile', 'default', 'oss', '--json'], sandbox)
+    expect(set.json<{ defaultProfile: string }>().defaultProfile).toBe('oss')
+
+    // It now drives clone routing.
+    const clone = await runCli(
+      ['clone', sandbox.remote, 'viadefault', '--no-alias', '--json'],
       sandbox,
     )
+    expect(clone.json<{ profile: string }>().profile).toBe('oss')
+
+    const shown = await runCli(['profile', 'default', '--json'], sandbox)
+    expect(shown.json<{ defaultProfile: string }>().defaultProfile).toBe('oss')
+
+    const cleared = await runCli(['profile', 'default', '--clear', '--json'], sandbox)
+    expect(cleared.json<{ defaultProfile: string | null }>().defaultProfile).toBeNull()
+  })
+
+  it('rejects an unknown profile as the default', async () => {
+    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    const result = await runCli(['profile', 'default', 'nope', '--json'], sandbox)
+    expect(result.exitCode).toBe(1)
+    expect(result.json<{ error: { code: string } }>().error.code).toBe(
+      'unknown_profile',
+    )
+  })
+
+  it('clears the default when that profile is removed', async () => {
+    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    await runCli(['profile', 'add', 'oss', join(sandbox.root, 'oss'), '--json'], sandbox)
+    await runCli(['profile', 'default', 'oss', '--json'], sandbox)
+
+    await runCli(['profile', 'remove', 'oss', '--json'], sandbox)
+    const after = await runCli(['profile', 'default', '--json'], sandbox)
+    expect(after.json<{ defaultProfile: string | null }>().defaultProfile).toBeNull()
+  })
+})
+
+describe('registry aliases', () => {
+  it('refuses an alias that collides with an existing repo name', async () => {
+    // Names and aliases share one namespace, so accepting this would delete
+    // the existing repo's registration.
+    const other = join(sandbox.root, 'code', 'other')
+    await mkdir(other, { recursive: true })
+    await runCli(['repos', 'add', sandbox.repoPath, '--name', 'keepme', '--json'], sandbox)
+
     const result = await runCli(
-      ['clone', sandbox.remote, 'blocked', '--profile', 'work', '--no-alias', '--json'],
+      ['repos', 'add', sandbox.repoPath, '--name', 'newrepo', '--alias', 'keepme', '--json'],
       sandbox,
     )
     expect(result.exitCode).toBe(1)
     expect(result.json<{ error: { code: string } }>().error.code).toBe(
-      'profile_blocks_host',
+      'alias_conflicts_with_repo',
     )
+
+    // The existing repo survived.
+    const repos = await runCli(['repos', '--json'], sandbox)
+    const names = repos.json<{ repos: { name: string }[] }>().repos.map((r) => r.name)
+    expect(names).toContain('keepme')
   })
 })
 
@@ -763,14 +813,14 @@ describe('grove profile add writes config immediately', () => {
   it('writes git and Claude config without a separate apply step', async () => {
     const workDir = join(sandbox.root, 'work')
     const result = await runCli(
-      ['profile', 'add', 'work', workDir, '--block-push', 'github.com', '--json'],
+      ['profile', 'add', 'work', workDir, '--json'],
       sandbox,
     )
     expect(result.exitCode).toBe(0)
 
     // The files exist straight away — no `profile apply` was run.
     const profileConfig = await readFile(join(workDir, '.gitconfig'), 'utf8')
-    expect(profileConfig).toContain('pushInsteadOf = https://github.com/')
+    expect(profileConfig).toContain('# Profile: work')
 
     const globalConfig = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
     expect(globalConfig).toContain(`[includeIf "gitdir:${workDir}/"]`)
@@ -789,7 +839,7 @@ describe('grove profile add writes config immediately', () => {
   it('leaves config alone with --no-apply', async () => {
     const workDir = join(sandbox.root, 'work')
     const result = await runCli(
-      ['profile', 'add', 'work', workDir, '--block-push', 'github.com', '--no-apply', '--json'],
+      ['profile', 'add', 'work', workDir, '--no-apply', '--json'],
       sandbox,
     )
     expect(result.json<{ wrote: string[] }>().wrote).toEqual([])
@@ -803,7 +853,7 @@ describe('grove profile add writes config immediately', () => {
 
   it('a follow-up apply reports nothing left to do', async () => {
     await runCli(
-      ['profile', 'add', 'work', join(sandbox.root, 'work'), '--block-push', 'github.com', '--json'],
+      ['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'],
       sandbox,
     )
     const apply = await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
@@ -827,20 +877,23 @@ describe('grove profile add writes config immediately', () => {
     expect(after).toContain(`gitdir:${ossDir}/`)
   })
 
-  it('removing a profile strips the push block from its directory', async () => {
+  it('removing a profile strips the managed block but keeps hand-written config', async () => {
     const workDir = join(sandbox.root, 'work')
-    await runCli(
-      ['profile', 'add', 'work', workDir, '--block-push', 'github.com', '--json'],
-      sandbox,
-    )
-    expect(await readFile(join(workDir, '.gitconfig'), 'utf8')).toContain(
-      'pushInsteadOf',
+    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+
+    const profileConfig = join(workDir, '.gitconfig')
+    expect(await readFile(profileConfig, 'utf8')).toContain('grove managed')
+
+    // A setting the user added themselves, below grove's block.
+    await writeFile(
+      profileConfig,
+      `${await readFile(profileConfig, 'utf8')}\n[user]\n\temail = work@example.com\n`,
     )
 
     await runCli(['profile', 'remove', 'work', '--json'], sandbox)
-    const after = await readFile(join(workDir, '.gitconfig'), 'utf8')
-    expect(after).not.toContain('pushInsteadOf')
+    const after = await readFile(profileConfig, 'utf8')
     expect(after).not.toContain('grove managed')
+    expect(after).toContain('email = work@example.com')
   })
 
   it('removing the last profile clears the managed block entirely', async () => {
@@ -859,19 +912,15 @@ describe('grove profile add writes config immediately', () => {
 })
 
 describe('grove profile apply', () => {
-  it('writes git push blocking and Claude read permissions', async () => {
+  it('writes the per-profile gitconfig and Claude read permissions', async () => {
     const workDir = join(sandbox.root, 'work')
-    await runCli(
-      ['profile', 'add', 'work', workDir, '--block-push', 'github.com', '--json'],
-      sandbox,
-    )
+    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
     const result = await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
     expect(result.exitCode).toBe(0)
 
-    // Per-profile gitconfig blocks pushes to the named host.
+    // Per-profile gitconfig exists, ready for the user's own settings.
     const profileConfig = await readFile(join(workDir, '.gitconfig'), 'utf8')
-    expect(profileConfig).toContain('pushInsteadOf = https://github.com/')
-    expect(profileConfig).toContain('grove-push-blocked://')
+    expect(profileConfig).toContain('# Profile: work')
 
     // Global gitconfig includes it only for paths under the profile dir.
     const globalConfig = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
@@ -915,8 +964,6 @@ describe('grove profile apply', () => {
         'add',
         'work',
         join(sandbox.root, 'work'),
-        '--block-push',
-        'github.com',
         '--json',
       ],
       sandbox,
@@ -982,29 +1029,39 @@ describe('grove profile apply', () => {
     expect(existsSync(join(workDir, '.gitconfig'))).toBe(false)
   })
 
-  it('actually blocks a push from inside the profile directory', async () => {
-    // The real proof: git itself must refuse, not just the config being present.
+  it('the generated includeIf actually engages for repos in the profile', async () => {
+    // The real proof: git must load the per-profile config, not merely have
+    // it written. git matches `gitdir:` against the realpath, so a profile
+    // dir stored uncanonicalised would silently never match.
     const workDir = join(sandbox.root, 'work')
-    await runCli(
-      ['profile', 'add', 'work', workDir, '--block-push', 'github.com', '--json'],
-      sandbox,
-    )
+    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
     await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
 
-    const repo = join(workDir, 'pushtest')
+    // A hand-written setting below the managed block, the way a user would
+    // add a profile-specific email or signing key.
+    const profileConfig = join(workDir, '.gitconfig')
+    await writeFile(
+      profileConfig,
+      `${await readFile(profileConfig, 'utf8')}\n[user]\n\temail = work@example.com\n`,
+    )
+
+    const repo = join(workDir, 'includetest')
     await mkdir(repo, { recursive: true })
     const gitHere = gitWithGlobalConfig(sandbox)
     await gitHere(['init', '-q', repo], sandbox.root)
-    await gitHere(['remote', 'add', 'origin', 'https://github.com/owner/repo.git'], repo)
 
-    // git resolves the push URL through pushInsteadOf, so the rewritten
-    // scheme proves the block is live rather than merely configured.
-    const resolved = await gitHere(['remote', 'get-url', '--push', 'origin'], repo)
-    expect(resolved).toContain('grove-push-blocked://')
+    // Resolved through the includeIf, so the profile config is live.
+    expect(await gitHere(['config', '--get', 'user.email'], repo)).toBe(
+      'work@example.com',
+    )
 
-    // The fetch URL is untouched, so reading the repo still works.
-    const fetchUrl = await gitHere(['remote', 'get-url', 'origin'], repo)
-    expect(fetchUrl).toBe('https://github.com/owner/repo.git')
+    // A repo outside the profile directory does not pick it up.
+    const outside = join(sandbox.root, 'elsewhere')
+    await mkdir(outside, { recursive: true })
+    await gitHere(['init', '-q', outside], sandbox.root)
+    await expect(
+      gitHere(['config', '--get', 'user.email'], outside),
+    ).rejects.toThrow()
   })
 })
 

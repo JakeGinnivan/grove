@@ -170,7 +170,10 @@ export async function createWorktree(
     const rootWorktree = existsSync(join(repoPath, 'main'))
       ? join(repoPath, 'main')
       : gitDir
-    await runSetupCommands(repoPath, fullPath, rootWorktree)
+    // Setup config is read from the root worktree, not the parent directory:
+    // `worktree.json` is committed at the repo root, and the parent dir that
+    // holds the worktrees is not version controlled at all.
+    await runSetupCommands(rootWorktree, fullPath, rootWorktree)
   }
 
   return { path: fullPath, branch, base, parent: parentBranch }

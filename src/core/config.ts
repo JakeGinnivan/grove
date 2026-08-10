@@ -3,21 +3,19 @@ import { join, resolve, sep } from 'node:path'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { WtError } from './errors.js'
+import { canonical } from './paths.js'
 
 /**
- * A profile groups repositories that share a location and a policy — for
- * example work code under ~/_code/atlassian with pushes to public hosts
- * blocked, versus open-source dependencies under ~/_code/oss.
+ * A profile is a base directory that repositories are grouped under — for
+ * example work code in ~/_code/work, versus open-source dependencies you read
+ * but do not modify in ~/_code/oss. Which profile a clone lands in is chosen
+ * explicitly with --profile, or by the configured default.
  */
 export interface Profile {
   /** Base directory that repos for this profile are cloned into. */
   dir: string
   /** Human/agent-facing summary of what belongs here. */
   description?: string
-  /** Host fragments whose URLs should be routed to this profile. */
-  hosts?: string[]
-  /** Refuse to push to remotes matching these host fragments. */
-  blockPushTo?: string[]
   /** Free-text policy statements surfaced to agents. */
   rules?: string[]
 }
@@ -99,12 +97,17 @@ export async function loadConfig(): Promise<GroveConfig> {
   }
 
   // Normalise paths once so every caller can compare them directly.
+  //
+  // Profile directories are canonicalised rather than merely resolved: git
+  // matches `includeIf gitdir:` against the real path, so a profile behind a
+  // symlink (macOS /tmp -> /private/tmp, a symlinked home) would silently
+  // never match and its generated config would never load.
   merged.defaultCodeDir = resolve(expandHome(merged.defaultCodeDir))
   merged.reposFile = resolve(expandHome(merged.reposFile))
   merged.profiles = Object.fromEntries(
     Object.entries(merged.profiles).map(([name, profile]) => [
       name,
-      { ...profile, dir: resolve(expandHome(profile.dir)) },
+      { ...profile, dir: canonical(expandHome(profile.dir)) },
     ]),
   )
   return merged
@@ -142,28 +145,13 @@ export function getProfile(
   return { ...profile, name }
 }
 
-/**
- * Find the profile a clone URL belongs to by matching its configured host
- * fragments. Returns undefined when nothing matches.
- */
-export function profileForUrl(
-  config: GroveConfig,
-  url: string,
-): ResolvedProfile | undefined {
-  for (const profile of profileList(config)) {
-    if (profile.hosts?.some((host) => host && url.includes(host))) {
-      return profile
-    }
-  }
-  return undefined
-}
-
 /** Find the profile that contains a path on disk, if any. */
 export function profileForPath(
   config: GroveConfig,
   path: string,
 ): ResolvedProfile | undefined {
-  const target = resolve(path)
+  // Canonical on both sides, matching how profile dirs are stored.
+  const target = canonical(path)
   // Prefer the most specific (longest) matching directory, so nested
   // profile directories resolve to the inner one.
   return profileList(config)
@@ -177,16 +165,4 @@ export function codeDirFor(
   profile: ResolvedProfile | undefined,
 ): string {
   return profile ? profile.dir : config.defaultCodeDir
-}
-
-/**
- * Check a clone URL against a profile's push restrictions. Used to stop a
- * repo landing in a directory whose policy forbids its host.
- */
-export function profileBlocksUrl(
-  profile: ResolvedProfile,
-  url: string,
-): string | undefined {
-  const blocked = profile.blockPushTo?.find((host) => host && url.includes(host))
-  return blocked
 }

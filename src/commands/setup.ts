@@ -113,7 +113,7 @@ async function runSetup(options: SetupOptions): Promise<void> {
   log(pc.cyan('  eval "$(grove shell-init zsh)"'))
   log()
   log(pc.bold('Optional — group repos into profiles with their own rules:'))
-  log(pc.cyan('  grove profile add work ~/_code/work --block-push github.com'))
+  log(pc.cyan('  grove profile add work ~/_code/work --default'))
   log()
   log(pc.bold('Install the agent skills:'))
   log(pc.cyan('  grove skills install'))

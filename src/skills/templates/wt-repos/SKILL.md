@@ -46,8 +46,8 @@ Key points:
 
 ## Profiles and their rules — read before crossing repositories
 
-Repositories are grouped into profiles by directory. A profile carries a
-policy: which hosts it may push to, and rules about how its code may be used.
+Repositories are grouped into profiles by directory. A profile carries rules
+about how the code under it may be used.
 
 ```bash
 grove profile list --json
@@ -62,7 +62,6 @@ grove profile list --json
       "name": "work",
       "dir": "/Users/you/_code/work",
       "description": "Internal work code",
-      "blockPushTo": ["github.com"],
       "rules": ["Never copy code from other profiles into this one (licensing)."],
       "isDefault": true
     },
@@ -70,7 +69,6 @@ grove profile list --json
       "name": "oss",
       "dir": "/Users/you/_code/oss",
       "description": "Open-source dependencies, for reference",
-      "blockPushTo": [],
       "rules": ["Reference only. Do not copy source into work repositories."]
     }
   ]
@@ -92,9 +90,10 @@ These rules are binding constraints, not suggestions:
   published package.
 - If a task appears to require crossing a rule, stop and ask the user.
 
-`blockPushTo` means git itself is configured to refuse pushes to those hosts
-from that directory. If a push fails with `grove-push-blocked://`, that is the
-policy working as intended — do not attempt to bypass it.
+A profile directory may carry its own git configuration (in
+`<profile>/.gitconfig`), which can include the user's own push restrictions.
+If a push is refused by git configuration, report it to the user rather than
+attempting to work around it.
 
 ## Update a repo before reading it
 

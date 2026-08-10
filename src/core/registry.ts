@@ -88,6 +88,25 @@ export async function writeRepo(
   repoPath: string,
   alias?: string,
 ): Promise<void> {
+  // Names and aliases share one namespace, and the rewrite below drops every
+  // line keyed by either. Without this guard, registering an alias that
+  // collides with an existing repo would silently delete that repo's entry.
+  if (alias && alias !== repoName) {
+    const existing = await readRegistry(reposFile)
+    const clash = existing.find(
+      (entry) => entry.name === alias && !entry.aliasOf && entry.name !== repoName,
+    )
+    if (clash) {
+      throw new WtError(
+        `Cannot use "${alias}" as an alias: a repo is already registered under that name.`,
+        {
+          code: 'alias_conflicts_with_repo',
+          hint: `"${alias}" points at ${clash.path}. Pick a different alias, or unregister it first with \`grove repos remove ${alias}\`.`,
+        },
+      )
+    }
+  }
+
   await mkdir(dirname(reposFile), { recursive: true })
   const existing = existsSync(reposFile)
     ? await readFile(reposFile, 'utf8')

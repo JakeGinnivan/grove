@@ -159,48 +159,68 @@ would happen.
 
 ## Profiles
 
-A profile is a directory with its own policy. Typical setup: work code that
-must never be pushed to a public host, alongside open-source dependencies you
-read but do not modify.
+A profile is a base directory that repositories are grouped under. Typical
+setup: work code in one directory, alongside open-source dependencies you read
+but do not modify.
 
 ```bash
 grove profile add work ~/_code/work \
   --description "Internal work code" \
-  --host bitbucket.org:myorg \
-  --block-push github.com \
   --rule "Never copy code from other profiles into this one (licensing)."
 
 grove profile add oss ~/_code/oss \
   --description "Open-source dependencies, for reference" \
   --rule "Reference only. Do not copy source into work repositories."
+
+grove profile default work
 ```
 
-Adding a profile configures it immediately — there is no second step. Each
-write goes inside a marked block grove owns, so your own settings survive:
+A profile decides where `grove clone` puts a repo, and carries `--rule`
+statements that the agent skills surface. Adding one configures it
+immediately — there is no second step. Each write goes inside a marked block
+grove owns, so your own settings survive:
 
 | File | What it gets |
 | --- | --- |
-| `<profile>/.gitconfig` | `pushInsteadOf` rules that make git refuse pushes to blocked hosts |
+| `<profile>/.gitconfig` | A managed header; add your own per-profile git settings below it |
 | `~/.gitconfig` | `includeIf gitdir:` stanzas pointing at each profile config |
 | `~/.claude/settings.json` | `additionalDirectories` + `Read(<dir>/**)` so agents can read your repos |
+
+The per-profile `.gitconfig` is wired up but intentionally empty. Anything you
+add below the managed block applies to every repo in that directory — a work
+email, a signing key, or `pushInsteadOf` rules if you want to block a host:
+
+```ini
+# ~/_code/work/.gitconfig, below the grove-managed block
+[url "blocked://"]
+	pushInsteadOf = https://github.com/
+```
 
 Because these files live outside the project, an interactive run lists them
 and asks once before writing. Pass `-y` to skip the prompt, or `--no-apply`
 to record the profile without touching anything.
 
-Removing a profile cleans up after itself: its `includeIf` stanza and the
-push rules in its directory both go, and hand-written config is left alone.
+Removing a profile cleans up after itself: its `includeIf` stanza and grove's
+managed block both go, and hand-written config is left alone.
 
 `grove profile apply` re-syncs everything. You need it only after editing
 `~/.config/grove/config.json` by hand, or when setting up a new machine from
 an existing config. It is idempotent; `--dry-run` previews the changes.
 
-Once profiles exist, `wt clone` routes automatically: a URL matching a
-profile's `--host` goes there; otherwise the default profile is used, or you
-are prompted to choose. Non-interactively, pass `--profile <name>`.
+Once profiles exist, `wt clone` picks one: `--profile` wins, then the default
+profile, then a prompt when several exist and none is the default.
+Non-interactively without a default, pass `--profile <name>`.
 
 ```bash
 wt clone git@github.com:facebook/react.git --profile oss
+```
+
+Set or inspect the default at any time:
+
+```bash
+grove profile default        # show the current default
+grove profile default work   # set it
+grove profile default --clear
 ```
 
 Cloning a URL into a profile that blocks its host is refused outright.
@@ -258,16 +278,17 @@ prompt:
 ```
 
 `error.code` is stable and safe to branch on. Notable codes: `needs_input`,
-`unknown_repo`, `unknown_profile`, `profile_blocks_host`, `branch_exists`,
-`branch_in_use`, `branch_not_found`, `worktree_exists`,
-`unknown_stack_parent`, `no_matching_worktree`, `ambiguous_worktree`.
+`unknown_repo`, `unknown_profile`, `branch_exists`, `branch_in_use`,
+`branch_not_found`, `worktree_exists`, `unknown_stack_parent`,
+`no_matching_worktree`, `ambiguous_worktree`, `alias_conflicts_with_repo`.
 
 Prompts are also skipped automatically when stdin is not a TTY.
 
 ## Per-repo setup commands
 
 A repo can declare commands to run in each new worktree, via `worktree.json`
-or `.cursor/worktrees.json` at the repo root:
+or `.cursor/worktrees.json` committed at the root of the repo itself (the
+`main/` checkout, not the parent directory holding the worktrees):
 
 ```json
 {
@@ -287,8 +308,8 @@ worktree. Skip them with `--no-setup`.
 | --- | --- |
 | `branchPrefix` | Prefix for generated branches (default `<user>/`) |
 | `defaultCodeDir` | Clone directory used when no profile matches |
-| `profiles` | Named directories with their own hosts, push blocks, and rules |
-| `defaultProfile` | Profile used when none is specified and none matches |
+| `profiles` | Named base directories, each with an optional description and rules |
+| `defaultProfile` | Profile used when `--profile` is not given |
 | `reposFile` | Repo registry location (default `~/.wt_repos`) |
 | `useTrash` | Trash removed worktrees instead of deleting |
 

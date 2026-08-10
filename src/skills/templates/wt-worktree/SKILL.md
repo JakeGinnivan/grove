@@ -138,13 +138,13 @@ usually recoverable.
 ## Profiles
 
 Repositories live under profile directories that carry their own policy —
-which hosts they may push to, and whether code may be shared with other
-profiles. Before copying code between two repositories, check
-`grove profile list --json` and follow the rules there. Copying source across
-profiles can create licensing problems; see the `wt-repos` skill.
+in particular whether code may be shared with other profiles. Before copying
+code between two repositories, check `grove profile list --json` and follow
+the rules there. Copying source across profiles can create licensing
+problems; see the `wt-repos` skill.
 
-If a push fails with a `grove-push-blocked://` URL, the profile forbids that
-host. Report it to the user; do not work around it.
+If a push is refused by git configuration, report it to the user; do not work
+around it.
 
 ## Rules
 

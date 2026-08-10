@@ -2,6 +2,7 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolve } from 'node:path'
 import { mkdir } from 'node:fs/promises'
+import { canonical } from '../core/paths.js'
 import {
   loadConfig,
   saveConfig,
@@ -40,14 +41,6 @@ export function profileCommand(): Command {
     .argument('<name>', 'profile name, e.g. work or oss')
     .argument('[dir]', 'base directory for clones in this profile')
     .option('-d, --description <text>', 'what belongs in this profile')
-    .option(
-      '--host <fragment...>',
-      'route clone URLs containing this fragment to this profile',
-    )
-    .option(
-      '--block-push <host...>',
-      'refuse pushes to these hosts from this profile',
-    )
     .option('--rule <text...>', 'policy statement surfaced to agents')
     .option('--default', 'use this profile when none is specified')
     .option('-y, --yes', 'write generated config without confirming')
@@ -65,6 +58,15 @@ export function profileCommand(): Command {
     .option('--no-apply', 'leave generated git/Claude config untouched')
     .action(async (name, options) => {
       await runRemove(name, options)
+    })
+
+  command
+    .command('default')
+    .description('Show or set the profile used when none is specified')
+    .argument('[name]', 'profile to make the default (omit to show it)')
+    .option('--clear', 'unset the default profile')
+    .action(async (name, options) => {
+      await runDefault(name, options)
     })
 
   // `add` and `remove` write this config themselves; `apply` exists to
@@ -94,8 +96,6 @@ async function runList(): Promise<void> {
         name: profile.name,
         dir: profile.dir,
         description: profile.description ?? null,
-        hosts: profile.hosts ?? [],
-        blockPushTo: profile.blockPushTo ?? [],
         rules: profile.rules ?? [],
         isDefault: config.defaultProfile === profile.name,
       })),
@@ -117,12 +117,6 @@ async function runList(): Promise<void> {
     log(`  ${pc.cyan(profile.name)}${marker}`)
     log(`    ${pc.dim('dir')}      ${profile.dir}`)
     if (profile.description) log(`    ${pc.dim('about')}    ${profile.description}`)
-    if (profile.hosts?.length) {
-      log(`    ${pc.dim('hosts')}    ${profile.hosts.join(', ')}`)
-    }
-    if (profile.blockPushTo?.length) {
-      log(`    ${pc.dim('no push')}  ${pc.yellow(profile.blockPushTo.join(', '))}`)
-    }
     for (const rule of profile.rules ?? []) {
       log(`    ${pc.dim('rule')}     ${rule}`)
     }
@@ -132,8 +126,6 @@ async function runList(): Promise<void> {
 
 interface AddOptions {
   description?: string
-  host?: string[]
-  blockPush?: string[]
   rule?: string[]
   default?: boolean
   yes?: boolean
@@ -157,24 +149,25 @@ async function runAdd(
     })
   }
 
-  const dir = dirArg ? resolve(expandHome(dirArg)) : existing!.dir
+  // The directory must be created before canonicalising, since realpath only
+  // resolves paths that exist; loadConfig canonicalises on the way back in.
+  const requestedDir = dirArg ? resolve(expandHome(dirArg)) : existing!.dir
+  await mkdir(requestedDir, { recursive: true })
+  const dir = canonical(requestedDir)
 
-  // Merge onto any existing profile so flags can be applied incrementally.
+  // Built field by field so flags apply incrementally over an existing
+  // profile, and keys from older config versions are not carried forward.
+  const description = options.description ?? existing?.description
+  const rules = options.rule ?? existing?.rules
   const profile: Profile = {
-    ...existing,
     dir,
-    ...(options.description !== undefined
-      ? { description: options.description }
-      : {}),
-    ...(options.host ? { hosts: options.host } : {}),
-    ...(options.blockPush ? { blockPushTo: options.blockPush } : {}),
-    ...(options.rule ? { rules: options.rule } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(rules ? { rules } : {}),
   }
 
   config.profiles[name] = profile
   if (options.default) config.defaultProfile = name
   await saveConfig(config)
-  await mkdir(dir, { recursive: true })
 
   // A profile is only real once its git and Claude config exist, so write
   // them now rather than leaving the user a second command to remember.
@@ -195,8 +188,8 @@ async function runAdd(
 
   success(`${existing ? 'Updated' : 'Added'} profile ${pc.cyan(name)} → ${dir}`)
   for (const file of written) log(pc.dim(`  wrote ${file}`))
-  if (options.apply === false && profile.blockPushTo?.length) {
-    log(pc.dim('  Run `grove profile apply` to write the git push block.'))
+  if (options.apply === false) {
+    log(pc.dim('  Run `grove profile apply` to write the generated config.'))
   }
 }
 
@@ -279,6 +272,54 @@ async function runRemove(
   log(pc.dim('  Repositories on disk were not touched.'))
 }
 
+/**
+ * The default decides where `grove clone` puts a repo when --profile is
+ * omitted, so it is worth being able to set without re-running `add`.
+ */
+async function runDefault(
+  name: string | undefined,
+  options: { clear?: boolean },
+): Promise<void> {
+  const config = await loadConfig()
+
+  if (options.clear) {
+    delete config.defaultProfile
+    await saveConfig(config)
+    if (getOutputContext().json) {
+      emitJson({ ok: true, defaultProfile: null })
+      return
+    }
+    success('Cleared the default profile')
+    return
+  }
+
+  if (!name) {
+    const current = config.defaultProfile ?? null
+    if (getOutputContext().json) {
+      emitJson({ ok: true, defaultProfile: current })
+      return
+    }
+    if (current) {
+      log(`Default profile: ${pc.cyan(current)}`)
+    } else {
+      log('No default profile set.')
+      log(pc.dim('  Set one with: grove profile default <name>'))
+    }
+    return
+  }
+
+  // Throws with the available names when the profile does not exist.
+  const profile = getProfile(config, name)
+  config.defaultProfile = name
+  await saveConfig(config)
+
+  if (getOutputContext().json) {
+    emitJson({ ok: true, defaultProfile: name, dir: profile.dir })
+    return
+  }
+  success(`Default profile is now ${pc.cyan(name)} → ${profile.dir}`)
+}
+
 async function runApply(options: {
   dryRun?: boolean
   yes?: boolean
@@ -336,11 +377,12 @@ async function runApply(options: {
   const written = await applyChanges(pending)
   for (const file of written) success(`Wrote ${file}`)
 
-  const blocked = profileList(config).filter((p) => p.blockPushTo?.length)
-  if (blocked.length > 0) {
+  const profiles = profileList(config)
+  if (profiles.length > 0) {
     log()
-    log(pc.dim('Push blocking is active for:'))
-    for (const profile of blocked) {
+    log(pc.dim('Per-profile git config (add your own settings below the'))
+    log(pc.dim('grove-managed block):'))
+    for (const profile of profiles) {
       log(pc.dim(`  ${profile.name} → ${profileGitconfigPath(profile)}`))
     }
   }

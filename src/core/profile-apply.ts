@@ -24,7 +24,9 @@ export const CLAUDE_SETTINGS = join(homedir(), '.claude', 'settings.json')
 
 /**
  * Build the per-profile gitconfig, which is included conditionally by the
- * global config for paths under the profile directory.
+ * global config for paths under the profile directory. Grove generates no
+ * settings of its own here; the file exists so per-profile git config (a work
+ * email, a signing key) can be hand-edited below the managed block.
  */
 function profileGitconfig(profile: ResolvedProfile): string {
   const lines = [
@@ -32,18 +34,9 @@ function profileGitconfig(profile: ResolvedProfile): string {
     `# Profile: ${profile.name}`,
   ]
   if (profile.description) lines.push(`# ${profile.description}`)
-
-  // pushurl of a bogus scheme makes git refuse the push with a clear error.
-  // This is the standard trick for blocking a host at the config level.
-  for (const host of profile.blockPushTo ?? []) {
-    lines.push(
-      '',
-      `[url "grove-push-blocked://${profile.name}/"]`,
-      `\tpushInsteadOf = https://${host}/`,
-      `\tpushInsteadOf = git@${host}:`,
-      `\tpushInsteadOf = ssh://git@${host}/`,
-    )
-  }
+  lines.push(
+    '# Add your own git settings for this profile below the managed block.',
+  )
   lines.push(END, '')
   return lines.join('\n')
 }
@@ -125,9 +118,7 @@ export async function planProfileChanges(
     changes.push({
       file: path,
       kind: 'git-profile',
-      description: profile.blockPushTo?.length
-        ? `Block pushes to ${profile.blockPushTo.join(', ')}`
-        : 'Profile git settings',
+      description: 'Profile git settings',
       contents,
       changed: contents !== existing,
     })
@@ -237,8 +228,10 @@ async function planClaudePermissions(
     allow.add(`Read(${dir}/**)`)
   }
 
+  // Both sorted so re-running apply produces no spurious diff in the user's
+  // settings.json.
   permissions.additionalDirectories = [...additional].sort()
-  permissions.allow = [...allow]
+  permissions.allow = [...allow].sort()
   const next: ClaudeSettings = { ...settings, permissions }
   const contents = `${JSON.stringify(next, null, 2)}\n`
 

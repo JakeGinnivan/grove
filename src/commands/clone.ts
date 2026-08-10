@@ -8,8 +8,6 @@ import {
   expandHome,
   profileList,
   getProfile,
-  profileForUrl,
-  profileBlocksUrl,
   codeDirFor,
   type ResolvedProfile,
   type GroveConfig,
@@ -43,25 +41,17 @@ interface CloneOptions {
 
 /**
  * Decide which profile a clone belongs to:
- *   --profile wins, then a host match, then the configured default, then a
- *   prompt when several exist and we can ask.
+ *   --profile wins, then the configured default, then a prompt when several
+ *   exist and we can ask.
  */
 async function chooseProfile(
   config: GroveConfig,
-  url: string,
   requested: string | undefined,
 ): Promise<ResolvedProfile | undefined> {
   if (requested) return getProfile(config, requested)
 
   const profiles = profileList(config)
   if (profiles.length === 0) return undefined
-
-  const byHost = profileForUrl(config, url)
-  if (byHost) {
-    info(`Profile ${pc.cyan(byHost.name)} matched the clone URL.`)
-    return byHost
-  }
-
   if (profiles.length === 1) return profiles[0]
 
   if (config.defaultProfile) {
@@ -70,7 +60,7 @@ async function chooseProfile(
 
   if (!canPrompt()) {
     throw new NeedsInputError(
-      `A profile is required (${profiles.length} configured, none matched the URL)`,
+      `A profile is required (${profiles.length} configured, no default set)`,
       `--profile <${profiles.map((p) => p.name).join('|')}>`,
     )
   }
@@ -97,21 +87,7 @@ async function runClone(
 
   const profile = options.dir
     ? undefined
-    : await chooseProfile(config, url, options.profile)
-
-  // A profile that blocks a host should not silently accept a repo from it.
-  if (profile) {
-    const blocked = profileBlocksUrl(profile, url)
-    if (blocked) {
-      throw new WtError(
-        `Profile "${profile.name}" blocks ${blocked}, but the clone URL points there.`,
-        {
-          code: 'profile_blocks_host',
-          hint: 'Clone into a different profile with --profile, or adjust the profile.',
-        },
-      )
-    }
-  }
+    : await chooseProfile(config, options.profile)
 
   const baseDir = options.dir
     ? resolve(expandHome(options.dir))

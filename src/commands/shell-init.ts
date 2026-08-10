@@ -222,9 +222,9 @@ ${commandLines}
         profile)
           if (( CURRENT == 2 )); then
             local -a sub
-            sub=('list:List profiles' 'add:Add or update a profile' 'remove:Remove a profile' 'apply:Write git and Claude config')
+            sub=('list:List profiles' 'add:Add or update a profile' 'remove:Remove a profile' 'default:Show or set the default profile' 'apply:Write git and Claude config')
             _describe -t subcommands 'profile subcommand' sub
-          elif [[ $words[2] == (remove|rm) ]]; then
+          elif [[ $words[2] == (remove|rm|default) ]]; then
             _grove_describe_from profiles profiles
           fi
           ;;
@@ -310,7 +310,7 @@ _grove_complete() {
   case "$cmd" in
     profile)
       if [ "$COMP_CWORD" -eq 2 ]; then
-        COMPREPLY=( $(compgen -W "list add remove apply" -- "$cur") )
+        COMPREPLY=( $(compgen -W "list add remove default apply" -- "$cur") )
         return
       fi
       ;;
@@ -409,7 +409,7 @@ complete -c ${name} -n '__fish_seen_subcommand_from checkout co' -a '(__grove_co
 complete -c ${name} -n '__fish_seen_subcommand_from pick cd cleanup rm' -a '(__grove_complete worktrees (__grove_repo_arg))'
 complete -c ${name} -n '__fish_seen_subcommand_from clone' -l profile -a '(__grove_complete profiles)' -d 'Profile to clone into'
 
-complete -c ${name} -n '__fish_seen_subcommand_from profile' -a 'list add remove apply'
+complete -c ${name} -n '__fish_seen_subcommand_from profile' -a 'list add remove default apply'
 complete -c ${name} -n '__fish_seen_subcommand_from skills' -a 'install list uninstall'
 complete -c ${name} -n '__fish_seen_subcommand_from repos' -a 'add remove'
 complete -c ${name} -n '__fish_seen_subcommand_from shell-init' -a 'zsh bash fish powershell'
@@ -491,7 +491,7 @@ ${commands}
             Where-Object { $_.CompletionText -like "$wordToComplete*" }
     }
     if ($position -eq 2 -and $sub -eq 'profile') {
-        return @('list', 'add', 'remove', 'apply') |
+        return @('list', 'add', 'remove', 'default', 'apply') |
             Where-Object { $_ -like "$wordToComplete*" } |
             ForEach-Object { New-Result $_ 'profile subcommand' }
     }

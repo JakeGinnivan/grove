@@ -1,6 +1,10 @@
 import { Command } from 'commander'
 import { CD_SENTINEL } from '../core/output.js'
 import { WtError } from '../core/errors.js'
+import { TARGET_NAMES } from './skills.js'
+
+/** Agent tools offered as `--target` completions. */
+const AGENT_TARGETS = TARGET_NAMES
 
 /**
  * Emits a shell function named `wt` that wraps the `grove` binary, plus tab
@@ -233,6 +237,12 @@ ${commandLines}
             local -a sub
             sub=('install:Install the agent skills' 'list:Show install status' 'uninstall:Remove installed skills')
             _describe -t subcommands 'skills subcommand' sub
+          else
+            _arguments \\
+              '*--target[agent tools to install for]:target:(${AGENT_TARGETS.join(' ')} all)' \\
+              '-f[overwrite existing skills]' \\
+              '--force[overwrite existing skills]' \\
+              '--dry-run[show what would be installed]'
           fi
           ;;
         repos)
@@ -299,6 +309,7 @@ _grove_values() {
 _grove_complete() {
   local cur prev words cword
   cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]:-}"
   local cmd="\${COMP_WORDS[1]:-}"
   local repo_commands=" ${repoCommands} "
 
@@ -319,6 +330,12 @@ _grove_complete() {
         COMPREPLY=( $(compgen -W "install list uninstall" -- "$cur") )
         return
       fi
+      if [ "$prev" = "--target" ] || [ "$prev" = "-t" ]; then
+        COMPREPLY=( $(compgen -W "${AGENT_TARGETS.join(' ')} all" -- "$cur") )
+        return
+      fi
+      COMPREPLY=( $(compgen -W "--target --force --dry-run" -- "$cur") )
+      return
       ;;
     repos)
       if [ "$COMP_CWORD" -eq 2 ]; then
@@ -411,6 +428,7 @@ complete -c ${name} -n '__fish_seen_subcommand_from clone' -l profile -a '(__gro
 
 complete -c ${name} -n '__fish_seen_subcommand_from profile' -a 'list add remove default apply'
 complete -c ${name} -n '__fish_seen_subcommand_from skills' -a 'install list uninstall'
+complete -c ${name} -n '__fish_seen_subcommand_from skills' -l target -a '${AGENT_TARGETS.join(' ')} all' -d 'Agent tool to install for'
 complete -c ${name} -n '__fish_seen_subcommand_from repos' -a 'add remove'
 complete -c ${name} -n '__fish_seen_subcommand_from shell-init' -a 'zsh bash fish powershell'
 

@@ -127,13 +127,19 @@ export async function multiselect(
   message: string,
   options: SelectOption[],
   what = 'A selection',
+  initialValues?: string[],
 ): Promise<string[]> {
   if (options.length === 0) return []
   if (!canPrompt()) {
     throw new NeedsInputError(what, 'the values as arguments')
   }
   return guard(
-    await clack.multiselect({ message, options, required: false }),
+    await clack.multiselect({
+      message,
+      options,
+      required: false,
+      ...(initialValues ? { initialValues } : {}),
+    }),
   )
 }
 

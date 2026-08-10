@@ -237,14 +237,40 @@ read `oss` code but not copy it across.
 grove skills install
 ```
 
-Installs two skills into `~/.claude/skills` (use `--target cursor` or a path
-for other agents):
+This detects the agent tools installed on your machine and asks which of them
+to install for, with all pre-selected:
+
+```
+Which tools should grove install skills for?
+
+  ◉ Claude Code          ~/.claude/skills
+  ◉ Codex CLI            ~/.codex/skills
+  ◉ GitHub Copilot CLI   ~/.copilot/skills
+  ◉ Gemini CLI           ~/.gemini/skills
+```
+
+Two skills are installed:
 
 - **wt-repos** — discovering cloned repos and their paths, which profile each
   belongs to and what rules apply, and running `grove sync` before reading
   code so the agent is not reasoning about a stale checkout.
 - **wt-worktree** — creating worktrees for tasks, checking out branches,
   stacking work, and cleaning up safely.
+
+Each tool reads skills from its own directory, so grove writes a copy per
+tool. Supported: `claude`, `codex`, `copilot`, `cursor`, `gemini`, and
+`opencode`. Skip the prompt with `--target`:
+
+```bash
+grove skills install --target claude codex   # named tools
+grove skills install --target all            # every known tool
+grove skills install --target ~/somewhere    # an explicit directory
+```
+
+Without a TTY (`--json`, CI, or an agent), install goes to every detected
+tool without prompting. `grove skills list` shows where the skills are
+installed and which tools were detected; `grove skills uninstall` removes
+them.
 
 ### Non-interactive commands
 

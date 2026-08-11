@@ -369,8 +369,9 @@ CI runs the suite on Node 20 and 24 across Linux, macOS, and Windows.
 
 ## Releasing
 
-Releases are driven by [changesets](https://github.com/changesets/changesets).
-When you change something users can observe, describe it:
+Releases are driven by [changesets](https://github.com/changesets/changesets),
+which need no GitHub token and work offline. When you change something users
+can observe, describe it:
 
 ```bash
 pnpm changeset

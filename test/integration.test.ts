@@ -670,7 +670,12 @@ describe('grove __complete', () => {
       .split('\n')
       .map((line) => line.split('\t')[0])
     expect(dirs).toContain('main')
-    expect(dirs).toContain('260810-completion-target')
+    // Matched by suffix: the directory carries today's yymmdd prefix, so
+    // pinning the literal date makes the test pass only on the day it was
+    // written.
+    expect(dirs).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^\d{6}-completion-target$/)]),
+    )
   })
 
   it('lists branches and flags those already checked out', async () => {

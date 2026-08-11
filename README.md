@@ -26,7 +26,7 @@ Every directory is a real checkout backed by one clone, so switching tasks is
 ## Install
 
 ```bash
-npm install -g grove-cli
+npm install -g @jakeginnivan/grove
 ```
 
 Then add the shell integration:
@@ -364,6 +364,34 @@ pnpm typecheck
 Built with TypeScript 7. Integration tests run the built bundle against
 throwaway git repos with a redirected `HOME`, so they exercise what ships
 without touching your real configuration.
+
+CI runs the suite on Node 20 and 24 across Linux, macOS, and Windows.
+
+## Releasing
+
+Releases are driven by [changesets](https://github.com/changesets/changesets).
+When you change something users can observe, describe it:
+
+```bash
+pnpm changeset
+```
+
+Pick the bump and write a sentence for the release notes. Commit the generated
+file with your change; CI fails a PR that touches `src/` without one.
+
+On merge to `main`, CI opens a **Version Packages** PR that applies the pending
+changesets — bumping the version and folding them into `CHANGELOG.md`. Merging
+that PR publishes to npm. The version PR is the release gate: nothing ships
+until you merge it.
+
+Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
+over OIDC, so there is no npm token stored in GitHub — nothing to leak, and
+every release carries a [provenance attestation](https://docs.npmjs.com/generating-provenance-statements/)
+linking it to the commit and workflow run that built it. Verify one with:
+
+```bash
+npm audit signatures
+```
 
 ## License
 

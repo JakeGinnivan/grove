@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Nothing is granted by default; the release job asks for exactly what it needs.
+permissions: {}
+
+# Two releases running at once would race on the version PR and the registry.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: version or publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the version bump, push tags
+      pull-requests: write # open/update the "Version Packages" PR
+      id-token: write # npm trusted publishing (OIDC) + provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+
+      # Deliberately no `registry-url`: it writes an auth line into .npmrc,
+      # and npm then skips the OIDC exchange and publishes as anonymous —
+      # surfacing as a bare 404. https://github.com/changesets/changesets/issues/1914
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Trusted publishing needs npm >= 11.5.1. Node 24 ships a new enough npm
+      # today, but the bundled version drifts; pinning it here keeps a runner
+      # image update from turning into a mystery 404 at publish time.
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      # No NPM_TOKEN anywhere: authentication is the OIDC exchange, and
+      # provenance is automatic because of it. GITHUB_TOKEN is only for
+      # opening the version PR and reading PR titles for the changelog.
+      - name: Create version PR or publish
+        uses: changesets/action@3841a0683d3cfa6dae0f9bb335290003010fe3f0 # v1.9.0
+        with:
+          version: pnpm changeset version
+          publish: pnpm release
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

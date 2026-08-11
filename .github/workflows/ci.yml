@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# CI only ever reads. The release workflow asks for more, per job.
+permissions:
+  contents: read
+
+# A new push supersedes an in-flight run for the same ref, except on main
+# where every commit's result is worth keeping.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor declared in engines; 24 is current LTS. The CLI
+        # drives real git across three platforms, so all three are tested.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Integration tests shell out to git and read its config, so give the
+      # runner an identity rather than letting each test invent one.
+      - name: Configure git identity
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          git config --global init.defaultBranch main
+
+      - run: pnpm typecheck
+
+      # Builds first via the vitest globalSetup, then runs against the bundle.
+      - run: pnpm test
+
+  # Guards the release flow: a behaviour change merged without a changeset
+  # would otherwise ship silently under the previous version number.
+  changeset:
+    name: changeset present
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check for a changeset
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The version PR itself consumes changesets rather than adding one.
+          if git diff --name-only "$BASE" "$HEAD" | grep -q '^\.changeset/.*\.md$'; then
+            echo "Changeset found."
+            exit 0
+          fi
+          # Nothing shipped means nothing to describe.
+          if ! git diff --name-only "$BASE" "$HEAD" | grep -qE '^src/|^package\.json$'; then
+            echo "No shippable changes; no changeset needed."
+            exit 0
+          fi
+          echo "::error::This PR changes src/ but adds no changeset."
+          echo "Run \`pnpm changeset\` and commit the result, or add one via the"
+          echo "changeset bot if the change is not user-visible."
+          exit 1

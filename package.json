@@ -22,15 +22,14 @@
     "node": ">=20"
   },
   "bin": {
-    "grove": "./dist/cli.mjs"
+    "grove": "dist/cli.mjs"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "scripts": {
     "build": "tsdown",

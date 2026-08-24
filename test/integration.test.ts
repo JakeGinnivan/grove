@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   createSandbox,
   runCli,
+  runCliWithTty,
   gitIn,
   gitWithGlobalConfig,
   type Sandbox,
@@ -651,6 +652,26 @@ describe('shell integration', () => {
     const pwsh = await runCli(['shell-init', 'powershell'], sandbox)
     expect(pwsh.stdout).toContain('Set-Location')
   })
+
+  /**
+   * The wrapper reads stdout with `$(...)`, so a prompt rendered there would
+   * be invisible to the user and would wreck the sentinel line the wrapper
+   * matches on. Prompts must therefore render to stderr.
+   */
+  it('renders prompts on stderr, leaving stdout as a clean sentinel', async () => {
+    const result = await runCliWithTty(
+      ['clone', sandbox.remote, 'prompted'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+    )
+
+    // The alias prompt was shown, and it was shown on stderr.
+    expect(result.stderr).toContain('Short alias for')
+
+    // stdout carries the sentinel and nothing else, so the wrapper can cd.
+    const mainPath = join(sandbox.root, 'code', 'prompted', 'main')
+    expect(result.stdout.trim()).toBe(`__WT_CD__${mainPath}`)
+  }, 30_000)
 })
 
 describe('grove __complete', () => {

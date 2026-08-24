@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdtemp, rm, mkdir, writeFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -147,6 +147,68 @@ function makeResult(stdout: string, stderr: string, exitCode: number): RunResult
     exitCode,
     json: <T,>() => JSON.parse(stdout) as T,
   }
+}
+
+/**
+ * Run the CLI with stdin pretending to be a TTY, so interactive prompts
+ * actually render, and answer the first prompt with Enter. Used to assert
+ * which stream prompts are drawn on; stdout and stderr stay separate pipes.
+ */
+export async function runCliWithTty(
+  args: string[],
+  sandbox: Sandbox,
+  extraEnv: NodeJS.ProcessEnv = {},
+  { answerAfterMs = 1500, timeoutMs = 15_000 } = {},
+): Promise<RunResult> {
+  // A loader that flips isTTY before handing off to the real bundle. argv[1]
+  // is rewritten so the CLI's own argv parsing lines up as if run directly.
+  const shim = join(sandbox.root, 'tty-shim.mjs')
+  await writeFile(
+    shim,
+    [
+      `process.stdin.isTTY = true`,
+      `process.stdin.setRawMode = () => process.stdin`,
+      `process.argv.splice(1, 1, ${JSON.stringify(CLI)})`,
+      `await import(${JSON.stringify(CLI)})`,
+    ].join('\n'),
+  )
+
+  const child = spawn(process.execPath, [shim, ...args], {
+    cwd: sandbox.root,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      HOME: sandbox.root,
+      USERPROFILE: sandbox.root,
+      GROVE_REPOS_FILE: sandbox.reposFile,
+      GROVE_DEFAULT_CODE_DIR: join(sandbox.root, 'code'),
+      GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
+      GIT_CONFIG_SYSTEM: '/dev/null',
+      GIT_AUTHOR_NAME: 'Test',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'Test',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+      ...extraEnv,
+    },
+  })
+
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk) => (stdout += chunk))
+  child.stderr.on('data', (chunk) => (stderr += chunk))
+
+  // Accept the prompt's default. A carriage return is what a real terminal
+  // sends in raw mode, which is what clack is listening for.
+  const answer = setTimeout(() => child.stdin.write('\r'), answerAfterMs)
+  const abort = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
+
+  const exitCode = await new Promise<number>((resolve) => {
+    child.on('close', (code) => resolve(code ?? 1))
+  })
+  clearTimeout(answer)
+  clearTimeout(abort)
+
+  return makeResult(stdout, stderr, exitCode)
 }
 
 export { git as gitIn }

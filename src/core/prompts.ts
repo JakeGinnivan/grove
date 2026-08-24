@@ -2,6 +2,13 @@ import * as clack from '@clack/prompts'
 import { CancelledError, NeedsInputError } from './errors.js'
 import { getOutputContext } from './output.js'
 
+/**
+ * Every prompt renders to stderr. The shell wrapper captures stdout with
+ * `$(...)` to read the cd sentinel, so anything clack wrote there would be
+ * swallowed (an invisible prompt) and would corrupt the sentinel line.
+ */
+const PROMPT_STREAM = { output: process.stderr }
+
 /** True when we may prompt: a TTY, not --json, not --no-interactive. */
 export function canPrompt(): boolean {
   const { interactive } = getOutputContext()
@@ -37,6 +44,7 @@ export async function requireText(
 
   const answer = guard(
     await clack.text({
+      ...PROMPT_STREAM,
       message: options.message,
       placeholder: options.placeholder,
       initialValue: options.initialValue,
@@ -63,6 +71,7 @@ export async function optionalText(
 
   const answer = guard(
     await clack.text({
+      ...PROMPT_STREAM,
       message: options.message,
       placeholder: options.placeholder,
       validate: (value) => {
@@ -92,6 +101,7 @@ export async function confirm(
   }
   return guard(
     await clack.confirm({
+      ...PROMPT_STREAM,
       message,
       initialValue: options.defaultValue ?? false,
     }),
@@ -120,7 +130,7 @@ export async function select(
   if (!canPrompt()) {
     throw new NeedsInputError(what, 'the value as an argument')
   }
-  return guard(await clack.select({ message, options }))
+  return guard(await clack.select({ ...PROMPT_STREAM, message, options }))
 }
 
 export async function multiselect(
@@ -135,6 +145,7 @@ export async function multiselect(
   }
   return guard(
     await clack.multiselect({
+      ...PROMPT_STREAM,
       message,
       options,
       required: false,
@@ -143,10 +154,11 @@ export async function multiselect(
   )
 }
 
-export const spinner = clack.spinner
+export const spinner = (options: Parameters<typeof clack.spinner>[0] = {}) =>
+  clack.spinner({ ...PROMPT_STREAM, ...options })
 export const intro = (title: string) => {
-  if (canPrompt()) clack.intro(title)
+  if (canPrompt()) clack.intro(title, PROMPT_STREAM)
 }
 export const outro = (message: string) => {
-  if (canPrompt()) clack.outro(message)
+  if (canPrompt()) clack.outro(message, PROMPT_STREAM)
 }

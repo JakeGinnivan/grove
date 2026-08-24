@@ -3,7 +3,7 @@ import { promisify } from 'node:util'
 import { mkdtemp, rm, mkdir, writeFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const execFileAsync = promisify(execFile)
 
@@ -169,7 +169,9 @@ export async function runCliWithTty(
       `process.stdin.isTTY = true`,
       `process.stdin.setRawMode = () => process.stdin`,
       `process.argv.splice(1, 1, ${JSON.stringify(CLI)})`,
-      `await import(${JSON.stringify(CLI)})`,
+      // A bare path is not a valid ESM specifier on Windows, where it reads
+      // as a URL with a "c:" scheme; import via a file:// URL instead.
+      `await import(${JSON.stringify(pathToFileURL(CLI).href)})`,
     ].join('\n'),
   )
 

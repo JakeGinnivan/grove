@@ -617,7 +617,10 @@ describe('wt skills install', () => {
     const target = join(sandbox.root, 'skills-target')
     await runCli(['skills', 'install', '--target', target, '--json'], sandbox)
     const content = await readFile(join(target, 'wt-worktree', 'SKILL.md'), 'utf8')
-    expect(content).toMatch(/^---\nname: wt-worktree\ndescription: .+/m)
+    // git may check the template out with CRLF endings on Windows.
+    expect(content.replace(/\r\n/g, '\n')).toMatch(
+      /^---\nname: wt-worktree\ndescription: .+/m,
+    )
   })
 })
 

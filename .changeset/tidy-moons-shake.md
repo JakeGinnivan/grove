@@ -1,5 +1,5 @@
 ---
-'@jakeginnivan/grove': patch
+"@jakeginnivan/grove": minor
 ---
 
 Render interactive prompts on stderr so they are visible under the shell wrapper

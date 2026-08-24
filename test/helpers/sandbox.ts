@@ -34,22 +34,35 @@ export interface Sandbox {
 }
 
 /**
- * Run git inside the sandbox. `globalConfig` selects which file acts as the
- * global config: the null device for setup steps that must be pristine, or
- * the sandbox's own ~/.gitconfig when a test needs to observe generated
- * config.
+ * Environment for every git invocation the fixtures make, so none of them
+ * inherit the machine's real git configuration. `globalConfig` selects which
+ * file acts as the global config: the null device for setup steps that must
+ * be pristine, or the sandbox's own ~/.gitconfig when a test needs to observe
+ * generated config.
  */
+function gitEnv(globalConfig = NULL_DEVICE): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_CONFIG_SYSTEM: NULL_DEVICE,
+    // Git for Windows defaults core.autocrlf to true, which checks files out
+    // with CRLF while the index holds LF — every file then reads as modified
+    // and the checkout is permanently "dirty". Pin it off so the fixtures
+    // behave the same on every platform.
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.autocrlf',
+    GIT_CONFIG_VALUE_0: 'false',
+  }
+}
+
+/** Run git inside the sandbox. */
 async function git(
   args: string[],
   cwd: string,
   globalConfig = NULL_DEVICE,
 ): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfig,
-      GIT_CONFIG_SYSTEM: NULL_DEVICE,
-    },
+    env: gitEnv(globalConfig),
   })
   return stdout.trim()
 }
@@ -68,11 +81,17 @@ export async function createSandbox(name = 'demo'): Promise<Sandbox> {
   const reposFile = join(root, 'repos')
 
   await mkdir(remote, { recursive: true })
-  await execFileAsync('git', ['init', '--bare', '--initial-branch=main', remote])
+  await execFileAsync(
+    'git',
+    ['init', '--bare', '--initial-branch=main', remote],
+    { env: gitEnv() },
+  )
 
   const seed = join(root, 'seed')
   await mkdir(seed, { recursive: true })
-  await execFileAsync('git', ['init', '--initial-branch=main', seed])
+  await execFileAsync('git', ['init', '--initial-branch=main', seed], {
+    env: gitEnv(),
+  })
   await git(['config', 'user.email', 'test@example.com'], seed)
   await git(['config', 'user.name', 'Test'], seed)
   await writeFile(join(seed, 'README.md'), '# demo\n')
@@ -82,7 +101,7 @@ export async function createSandbox(name = 'demo'): Promise<Sandbox> {
   await git(['push', '-u', 'origin', 'main'], seed)
 
   await mkdir(repoPath, { recursive: true })
-  await execFileAsync('git', ['clone', remote, mainPath])
+  await execFileAsync('git', ['clone', remote, mainPath], { env: gitEnv() })
   await git(['config', 'user.email', 'test@example.com'], mainPath)
   await git(['config', 'user.name', 'Test'], mainPath)
   await git(['remote', 'set-head', 'origin', '--auto'], mainPath)
@@ -128,6 +147,10 @@ export async function runCli(
     // so `profile apply` writes somewhere git will actually read back.
     GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
     GIT_CONFIG_SYSTEM: NULL_DEVICE,
+    // Keep the CLI's own git calls on LF endings; see gitEnv above.
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.autocrlf',
+    GIT_CONFIG_VALUE_0: 'false',
     GIT_AUTHOR_NAME: 'Test',
     GIT_AUTHOR_EMAIL: 'test@example.com',
     GIT_COMMITTER_NAME: 'Test',
@@ -194,6 +217,9 @@ export async function runCliWithTty(
       GROVE_DEFAULT_CODE_DIR: join(sandbox.root, 'code'),
       GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
       GIT_CONFIG_SYSTEM: NULL_DEVICE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.autocrlf',
+      GIT_CONFIG_VALUE_0: 'false',
       GIT_AUTHOR_NAME: 'Test',
       GIT_AUTHOR_EMAIL: 'test@example.com',
       GIT_COMMITTER_NAME: 'Test',

@@ -402,12 +402,29 @@ describe('wt sync', () => {
     const data = result.json<{
       results: { updated: boolean; skipped: string | null }[]
     }>()
-    expect(data.results[0]?.updated).toBe(true)
-    expect(data.results[0]?.skipped).toBeNull()
+    // Assert on the whole result: a skip reason explains a failure here far
+    // better than a bare `expected false to be true`.
+    expect(data.results[0]).toMatchObject({ updated: true, skipped: null })
 
     const after = await gitIn(['rev-parse', 'HEAD'], sandbox.mainPath)
     expect(after).not.toBe(before)
     expect(existsSync(join(sandbox.mainPath, 'new.txt'))).toBe(true)
+  })
+
+  it('reports a failed fetch instead of "already up to date"', async () => {
+    // Make origin unreachable. Without a fetch check, origin/* still points at
+    // the old commit, the fast-forward no-ops, and sync looks successful.
+    await gitIn(
+      ['remote', 'set-url', 'origin', join(sandbox.root, 'missing.git')],
+      sandbox.mainPath,
+    )
+
+    const result = await runCli(['sync', 'demo', '--json'], sandbox)
+    const data = result.json<{
+      results: { updated: boolean; skipped: string | null }[]
+    }>()
+    expect(data.results[0]?.updated).toBe(false)
+    expect(data.results[0]?.skipped).toMatch(/^fetch failed:/)
   })
 
   it('reports no-op when already current', async () => {

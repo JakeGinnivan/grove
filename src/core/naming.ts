@@ -91,12 +91,25 @@ export function worktreeDirForBranch(branch: string, date = new Date()): string 
   return `${datePrefix(date)}-${slug}`
 }
 
-/** Extract a repo name from a clone URL, handling ssh, https, and scp forms. */
+/**
+ * Extract a repo name from a clone URL, handling ssh, https, scp, and local
+ * filesystem paths.
+ *
+ * The separator is the last `/`, `\`, or `:` — the colon covers the scp form
+ * (`git@host:owner/repo`), and the backslash covers Windows paths. A Windows
+ * drive letter also ends in a colon, so `C:\repos\thing.git` would otherwise
+ * cut at `C:` and return the whole remaining path as the name.
+ */
 export function repoNameFromUrl(url: string): string {
-  const cleaned = url.trim().replace(/\/+$/, '').replace(/\.git$/, '')
-  const lastSlash = cleaned.lastIndexOf('/')
-  const lastColon = cleaned.lastIndexOf(':')
-  const cut = Math.max(lastSlash, lastColon)
+  const cleaned = url
+    .trim()
+    .replace(/[/\\]+$/, '')
+    .replace(/\.git$/, '')
+  const cut = Math.max(
+    cleaned.lastIndexOf('/'),
+    cleaned.lastIndexOf('\\'),
+    cleaned.lastIndexOf(':'),
+  )
   const name = cut >= 0 ? cleaned.slice(cut + 1) : cleaned
   if (!name) {
     throw new Error(`Could not determine a repo name from URL: ${url}`)

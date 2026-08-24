@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { normalize } from 'node:path'
 import { WtError } from './errors.js'
 
 const execFileAsync = promisify(execFile)
@@ -122,7 +123,10 @@ export async function listWorktrees(gitDir: string): Promise<Worktree[]> {
   for (const line of stdout.split('\n')) {
     if (line.startsWith('worktree ')) {
       flush()
-      current = { path: line.slice('worktree '.length) }
+      // git reports paths with forward slashes even on Windows. Normalise to
+      // the platform separator so these compare equal to paths we build with
+      // node:path, which callers do when matching a worktree by path.
+      current = { path: normalize(line.slice('worktree '.length)) }
     } else if (!current) {
       continue
     } else if (line.startsWith('HEAD ')) {

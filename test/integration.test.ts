@@ -696,6 +696,7 @@ describe('shell integration', () => {
       ['clone', sandbox.remote, 'prompted'],
       sandbox,
       { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Short alias for' },
     )
 
     // The alias prompt was shown, and it was shown on stderr.

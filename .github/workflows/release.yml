@@ -38,15 +38,17 @@ jobs:
           runtime: node@24
           cache: true
 
-      # Trusted publishing needs npm >= 11.5.1. Node 24 ships a new enough npm
-      # today, but the bundled version drifts; pinning it here keeps a runner
-      # image update from turning into a mystery 404 at publish time.
-      - name: Ensure npm supports trusted publishing
-        run: npm install -g npm@latest
-
+      # Changesets detects pnpm and runs `pnpm publish`, so pnpm — not npm — is
+      # what performs the OIDC exchange, at the version from `packageManager`
+      # above. Keep that at 11.1.3 or newer: 11.0.x–11.1.2 sent unresolved
+      # .npmrc placeholders as a bearer token and 404'd instead of falling back
+      # to OIDC (pnpm/pnpm#11526). npm only needs to be on PATH at any version,
+      # for the unauthenticated `npm info` published-version check.
+      #
       # No NPM_TOKEN anywhere: authentication is the OIDC exchange, and
       # provenance is automatic because of it. GITHUB_TOKEN is only for
-      # opening the version PR and reading PR titles for the changelog.
+      # opening and pushing the version PR — the changelog is generated from
+      # commits by @changesets/changelog-git and needs no API access.
       - name: Create version PR or publish
         uses: changesets/action@3841a0683d3cfa6dae0f9bb335290003010fe3f0 # v1.9.0
         with:

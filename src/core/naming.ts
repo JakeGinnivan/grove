@@ -96,9 +96,11 @@ export function worktreeDirForBranch(branch: string, date = new Date()): string 
  * filesystem paths.
  *
  * The separator is the last `/`, `\`, or `:` — the colon covers the scp form
- * (`git@host:owner/repo`), and the backslash covers Windows paths. A Windows
- * drive letter also ends in a colon, so `C:\repos\thing.git` would otherwise
- * cut at `C:` and return the whole remaining path as the name.
+ * (`git@host:owner/repo`), and the backslash covers Windows paths. Taking the
+ * last of the three is what keeps a Windows drive letter from mattering: in
+ * `C:\repos\thing.git` the backslash sits past the colon, so the cut lands
+ * after `repos\` rather than after `C:`. Same for a port in a URL
+ * (`ssh://host:7999/owner/repo`), where the later `/` wins over the `:`.
  */
 export function repoNameFromUrl(url: string): string {
   const cleaned = url

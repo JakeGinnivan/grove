@@ -184,12 +184,16 @@ function makeResult(stdout: string, stderr: string, exitCode: number): RunResult
  * Run the CLI with stdin pretending to be a TTY, so interactive prompts
  * actually render, and answer the first prompt with Enter. Used to assert
  * which stream prompts are drawn on; stdout and stderr stay separate pipes.
+ *
+ * `answerWhen` is matched against stderr as it arrives and the Enter is sent
+ * once it matches, so the handoff does not depend on the clone finishing
+ * inside a fixed window on a cold or loaded runner.
  */
 export async function runCliWithTty(
   args: string[],
   sandbox: Sandbox,
   extraEnv: NodeJS.ProcessEnv = {},
-  { answerAfterMs = 1500, timeoutMs = 15_000 } = {},
+  { answerWhen, timeoutMs = 15_000 }: { answerWhen: string | RegExp; timeoutMs?: number },
 ): Promise<RunResult> {
   // A loader that flips isTTY before handing off to the real bundle. argv[1]
   // is rewritten so the CLI's own argv parsing lines up as if run directly.
@@ -231,18 +235,42 @@ export async function runCliWithTty(
   let stdout = ''
   let stderr = ''
   child.stdout.on('data', (chunk) => (stdout += chunk))
-  child.stderr.on('data', (chunk) => (stderr += chunk))
 
-  // Accept the prompt's default. A carriage return is what a real terminal
-  // sends in raw mode, which is what clack is listening for.
-  const answer = setTimeout(() => child.stdin.write('\r'), answerAfterMs)
-  const abort = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
+  // Accept the prompt's default, but only once the prompt is actually on
+  // screen — clack is not listening before then, and an Enter sent early is
+  // dropped. A carriage return is what a real terminal sends in raw mode.
+  let answered = false
+  const matches = (text: string) =>
+    typeof answerWhen === 'string' ? text.includes(answerWhen) : answerWhen.test(text)
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk
+    if (!answered && matches(stderr)) {
+      answered = true
+      // End stdin after the answer: clack puts the pipe in raw mode and keeps
+      // it open, which holds the child's event loop open after it has finished.
+      child.stdin.end('\r')
+    }
+  })
+
+  let timedOut = false
+  const abort = setTimeout(() => {
+    timedOut = true
+    child.kill('SIGKILL')
+  }, timeoutMs)
 
   const exitCode = await new Promise<number>((resolve) => {
-    child.on('close', (code) => resolve(code ?? 1))
+    // A signal-killed child reports a null code, which would otherwise be
+    // indistinguishable from an ordinary failure.
+    child.on('close', (code, signal) => resolve(code ?? (signal ? -1 : 1)))
   })
-  clearTimeout(answer)
   clearTimeout(abort)
+
+  if (timedOut) {
+    throw new Error(
+      `CLI timed out after ${timeoutMs}ms waiting for ${String(answerWhen)} on stderr.\n` +
+        `--- stderr ---\n${stderr}\n--- stdout ---\n${stdout}`,
+    )
+  }
 
   return makeResult(stdout, stderr, exitCode)
 }

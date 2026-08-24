@@ -15,6 +15,13 @@ const CLI = resolve(
   fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url)),
 )
 
+/**
+ * Path git should treat as "no config here". Windows has no /dev/null; the
+ * equivalent null device is NUL, and pointing git at a path that does not
+ * exist on the platform makes config reads behave inconsistently.
+ */
+const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
+
 export interface Sandbox {
   root: string
   /** Bare repo standing in for origin. */
@@ -28,19 +35,20 @@ export interface Sandbox {
 
 /**
  * Run git inside the sandbox. `globalConfig` selects which file acts as the
- * global config: /dev/null for setup steps that must be pristine, or the
- * sandbox's own ~/.gitconfig when a test needs to observe generated config.
+ * global config: the null device for setup steps that must be pristine, or
+ * the sandbox's own ~/.gitconfig when a test needs to observe generated
+ * config.
  */
 async function git(
   args: string[],
   cwd: string,
-  globalConfig = '/dev/null',
+  globalConfig = NULL_DEVICE,
 ): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
     env: {
       ...process.env,
       GIT_CONFIG_GLOBAL: globalConfig,
-      GIT_CONFIG_SYSTEM: '/dev/null',
+      GIT_CONFIG_SYSTEM: NULL_DEVICE,
     },
   })
   return stdout.trim()
@@ -116,10 +124,10 @@ export async function runCli(
     GROVE_REPOS_FILE: sandbox.reposFile,
     GROVE_BRANCH_PREFIX: 'test/',
     GROVE_DEFAULT_CODE_DIR: join(sandbox.root, 'code'),
-    // Point git's global config at the sandbox HOME rather than /dev/null,
+    // Point git's global config at the sandbox HOME rather than the null device,
     // so `profile apply` writes somewhere git will actually read back.
     GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
-    GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_CONFIG_SYSTEM: NULL_DEVICE,
     GIT_AUTHOR_NAME: 'Test',
     GIT_AUTHOR_EMAIL: 'test@example.com',
     GIT_COMMITTER_NAME: 'Test',
@@ -185,7 +193,7 @@ export async function runCliWithTty(
       GROVE_REPOS_FILE: sandbox.reposFile,
       GROVE_DEFAULT_CODE_DIR: join(sandbox.root, 'code'),
       GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
-      GIT_CONFIG_SYSTEM: '/dev/null',
+      GIT_CONFIG_SYSTEM: NULL_DEVICE,
       GIT_AUTHOR_NAME: 'Test',
       GIT_AUTHOR_EMAIL: 'test@example.com',
       GIT_COMMITTER_NAME: 'Test',

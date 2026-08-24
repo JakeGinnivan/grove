@@ -11,6 +11,13 @@ import {
   type Sandbox,
 } from './helpers/sandbox.js'
 
+/**
+ * grove spells paths with forward slashes inside git config files, because
+ * git reads `\` as an escape character. Mirror that when asserting on the
+ * generated config so these expectations hold on Windows too.
+ */
+const inGitConfig = (path: string) => path.replaceAll('\\', '/')
+
 let sandbox: Sandbox
 
 beforeEach(async () => {
@@ -382,6 +389,12 @@ describe('wt sync', () => {
     await gitIn(['add', '.'], helper)
     await gitIn(['commit', '-m', 'upstream work'], helper)
     await gitIn(['push'], helper)
+
+    // Guard the setup: if the push did not land, the sync assertions below
+    // would fail for a reason that has nothing to do with sync.
+    const pushed = await gitIn(['rev-parse', 'HEAD'], helper)
+    const onRemote = await gitIn(['rev-parse', 'main'], sandbox.remote)
+    expect(onRemote).toBe(pushed)
 
     const before = await gitIn(['rev-parse', 'HEAD'], sandbox.mainPath)
     const result = await runCli(['sync', 'demo', '--json'], sandbox)
@@ -897,7 +910,9 @@ describe('grove profile add writes config immediately', () => {
     expect(profileConfig).toContain('# Profile: work')
 
     const globalConfig = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(globalConfig).toContain(`[includeIf "gitdir:${workDir}/"]`)
+    expect(globalConfig).toContain(
+      `[includeIf "gitdir:${inGitConfig(workDir)}/"]`,
+    )
 
     const settings = JSON.parse(
       await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
@@ -941,14 +956,14 @@ describe('grove profile add writes config immediately', () => {
     await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
     await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
     expect(await readFile(join(sandbox.root, '.gitconfig'), 'utf8')).toContain(
-      `gitdir:${workDir}/`,
+      `gitdir:${inGitConfig(workDir)}/`,
     )
 
     await runCli(['profile', 'remove', 'work', '--json'], sandbox)
     const after = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(after).not.toContain(`gitdir:${workDir}/`)
+    expect(after).not.toContain(`gitdir:${inGitConfig(workDir)}/`)
     // The surviving profile keeps its stanza.
-    expect(after).toContain(`gitdir:${ossDir}/`)
+    expect(after).toContain(`gitdir:${inGitConfig(ossDir)}/`)
   })
 
   it('removing a profile strips the managed block but keeps hand-written config', async () => {
@@ -998,7 +1013,9 @@ describe('grove profile apply', () => {
 
     // Global gitconfig includes it only for paths under the profile dir.
     const globalConfig = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(globalConfig).toContain(`[includeIf "gitdir:${workDir}/"]`)
+    expect(globalConfig).toContain(
+      `[includeIf "gitdir:${inGitConfig(workDir)}/"]`,
+    )
 
     // Claude gains read access to the profile directory.
     const settings = JSON.parse(

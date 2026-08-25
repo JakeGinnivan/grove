@@ -1,20 +1,23 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue is where main is actually validated: it tests the PR
+  # rebased onto the current tip, which is the commit that will land. Running
+  # again on the push that follows would re-test that exact tree for nothing.
+  merge_group:
 
 # CI only ever reads. The release workflow asks for more, per job.
 permissions:
   contents: read
 
-# A new push supersedes an in-flight run for the same ref, except on main
-# where every commit's result is worth keeping.
+# One in-flight run per ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # A superseded PR run is wasted work, but a queue entry's run must finish:
+  # cancelling it fails the entry and drops the PR out of the queue.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -59,15 +62,24 @@ jobs:
   changeset:
     name: changeset present
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
+      # The check itself is PR-only — it diffs the PR against its base. It
+      # still has to *run* in the merge queue and pass, because a required
+      # check that is skipped never reports, and the entry would sit in the
+      # queue waiting for a status that never arrives.
+      - name: Not applicable outside a pull request
+        if: github.event_name != 'pull_request'
+        run: echo "Merge queue entry; the changeset was checked on the PR."
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
           persist-credentials: false
 
       # This job only reads the diff, so it needs neither pnpm nor Node.
       - name: Check for a changeset
+        if: github.event_name == 'pull_request'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
@@ -86,3 +98,28 @@ jobs:
           echo "Run \`pnpm changeset\` and commit the result, or add one via the"
           echo "changeset bot if the change is not user-visible."
           exit 1
+
+  # A single stable context for the ruleset to require. The matrix job names
+  # encode the Node version and OS, so requiring them directly means every
+  # matrix change silently renames a required check — and a required check
+  # that no longer reports blocks every PR. This name never changes.
+  #
+  # `always()` so this runs even when a dependency fails; without it the job
+  # would be skipped, report no status, and hang the merge queue entry.
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    needs: [test, changeset]
+    if: always()
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          # Anything other than success (failure, cancelled, skipped) fails the gate.
+          if echo "$RESULTS" | grep -q '"result": *"\(failure\|cancelled\|skipped\)"'; then
+            echo "::error::A required upstream job did not succeed."
+            exit 1
+          fi
+          echo "All required jobs succeeded."

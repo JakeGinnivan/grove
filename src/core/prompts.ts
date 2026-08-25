@@ -9,10 +9,25 @@ import { getOutputContext } from './output.js'
  */
 const PROMPT_STREAM = { output: process.stderr }
 
+/**
+ * clack styles prompts with `util.styleText`, which decides whether to emit
+ * ANSI codes by inspecting `process.stdout` — but the `wt` wrapper captures
+ * stdout with `$(...)`, so it is a pipe and styling gets stripped. The prompt
+ * itself goes to stderr, which is still a TTY, so the text arrives unstyled:
+ * no inverse block for the cursor and no dim placeholder. Opt back in when
+ * stderr can show colour and the user has not asked otherwise.
+ */
+function enablePromptColour(): void {
+  if (process.env.NO_COLOR || process.env.FORCE_COLOR) return
+  if (process.stderr.isTTY === true) process.env.FORCE_COLOR = '1'
+}
+
 /** True when we may prompt: a TTY, not --json, not --no-interactive. */
 export function canPrompt(): boolean {
   const { interactive } = getOutputContext()
-  return interactive && process.stdin.isTTY === true
+  const ok = interactive && process.stdin.isTTY === true
+  if (ok) enablePromptColour()
+  return ok
 }
 
 function guard<T>(value: T | symbol): T {

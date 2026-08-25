@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Command } from 'commander'
 import { setOutputContext, reportError } from './core/output.js'
 import { CancelledError } from './core/errors.js'
@@ -16,12 +19,18 @@ import { shellInitCommand } from './commands/shell-init.js'
 import { profileCommand } from './commands/profile.js'
 import { completeCommand } from './commands/complete.js'
 
-const VERSION = '0.1.0'
+// package.json is the single source of truth for the version; changesets bumps
+// it and nothing else needs updating. npm always ships it next to the bundle,
+// so dist/cli.mjs finds it one directory up.
+const VERSION = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8'),
+).version as string
 
 function buildProgram(): Command {
   const program = new Command('grove')
     .description('Git worktree manager')
-    .version(VERSION)
+    // commander defaults to -V; nothing here uses -v for verbosity.
+    .version(VERSION, '-v, --version')
     // Documented here for `--help`; parsed out of argv before commander runs
     // so they can appear after the subcommand too.
     .option('--json', 'emit machine-readable JSON (implies --no-interactive)')

@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdtemp, rm, mkdir, writeFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const execFileAsync = promisify(execFile)
 
@@ -14,6 +14,13 @@ const execFileAsync = promisify(execFile)
 const CLI = resolve(
   fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url)),
 )
+
+/**
+ * Path git should treat as "no config here". Windows has no /dev/null; the
+ * equivalent null device is NUL, and pointing git at a path that does not
+ * exist on the platform makes config reads behave inconsistently.
+ */
+const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 
 export interface Sandbox {
   root: string
@@ -27,21 +34,35 @@ export interface Sandbox {
 }
 
 /**
- * Run git inside the sandbox. `globalConfig` selects which file acts as the
- * global config: /dev/null for setup steps that must be pristine, or the
- * sandbox's own ~/.gitconfig when a test needs to observe generated config.
+ * Environment for every git invocation the fixtures make, so none of them
+ * inherit the machine's real git configuration. `globalConfig` selects which
+ * file acts as the global config: the null device for setup steps that must
+ * be pristine, or the sandbox's own ~/.gitconfig when a test needs to observe
+ * generated config.
  */
+function gitEnv(globalConfig = NULL_DEVICE): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_CONFIG_SYSTEM: NULL_DEVICE,
+    // Git for Windows defaults core.autocrlf to true, which checks files out
+    // with CRLF while the index holds LF — every file then reads as modified
+    // and the checkout is permanently "dirty". Pin it off so the fixtures
+    // behave the same on every platform.
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.autocrlf',
+    GIT_CONFIG_VALUE_0: 'false',
+  }
+}
+
+/** Run git inside the sandbox. */
 async function git(
   args: string[],
   cwd: string,
-  globalConfig = '/dev/null',
+  globalConfig = NULL_DEVICE,
 ): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfig,
-      GIT_CONFIG_SYSTEM: '/dev/null',
-    },
+    env: gitEnv(globalConfig),
   })
   return stdout.trim()
 }
@@ -60,11 +81,17 @@ export async function createSandbox(name = 'demo'): Promise<Sandbox> {
   const reposFile = join(root, 'repos')
 
   await mkdir(remote, { recursive: true })
-  await execFileAsync('git', ['init', '--bare', '--initial-branch=main', remote])
+  await execFileAsync(
+    'git',
+    ['init', '--bare', '--initial-branch=main', remote],
+    { env: gitEnv() },
+  )
 
   const seed = join(root, 'seed')
   await mkdir(seed, { recursive: true })
-  await execFileAsync('git', ['init', '--initial-branch=main', seed])
+  await execFileAsync('git', ['init', '--initial-branch=main', seed], {
+    env: gitEnv(),
+  })
   await git(['config', 'user.email', 'test@example.com'], seed)
   await git(['config', 'user.name', 'Test'], seed)
   await writeFile(join(seed, 'README.md'), '# demo\n')
@@ -74,7 +101,7 @@ export async function createSandbox(name = 'demo'): Promise<Sandbox> {
   await git(['push', '-u', 'origin', 'main'], seed)
 
   await mkdir(repoPath, { recursive: true })
-  await execFileAsync('git', ['clone', remote, mainPath])
+  await execFileAsync('git', ['clone', remote, mainPath], { env: gitEnv() })
   await git(['config', 'user.email', 'test@example.com'], mainPath)
   await git(['config', 'user.name', 'Test'], mainPath)
   await git(['remote', 'set-head', 'origin', '--auto'], mainPath)
@@ -116,10 +143,14 @@ export async function runCli(
     GROVE_REPOS_FILE: sandbox.reposFile,
     GROVE_BRANCH_PREFIX: 'test/',
     GROVE_DEFAULT_CODE_DIR: join(sandbox.root, 'code'),
-    // Point git's global config at the sandbox HOME rather than /dev/null,
+    // Point git's global config at the sandbox HOME rather than the null device,
     // so `profile apply` writes somewhere git will actually read back.
     GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
-    GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_CONFIG_SYSTEM: NULL_DEVICE,
+    // Keep the CLI's own git calls on LF endings; see gitEnv above.
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.autocrlf',
+    GIT_CONFIG_VALUE_0: 'false',
     GIT_AUTHOR_NAME: 'Test',
     GIT_AUTHOR_EMAIL: 'test@example.com',
     GIT_COMMITTER_NAME: 'Test',
@@ -147,6 +178,101 @@ function makeResult(stdout: string, stderr: string, exitCode: number): RunResult
     exitCode,
     json: <T,>() => JSON.parse(stdout) as T,
   }
+}
+
+/**
+ * Run the CLI with stdin pretending to be a TTY, so interactive prompts
+ * actually render, and answer the first prompt with Enter. Used to assert
+ * which stream prompts are drawn on; stdout and stderr stay separate pipes.
+ *
+ * `answerWhen` is matched against stderr as it arrives and the Enter is sent
+ * once it matches, so the handoff does not depend on the clone finishing
+ * inside a fixed window on a cold or loaded runner.
+ */
+export async function runCliWithTty(
+  args: string[],
+  sandbox: Sandbox,
+  extraEnv: NodeJS.ProcessEnv = {},
+  { answerWhen, timeoutMs = 15_000 }: { answerWhen: string | RegExp; timeoutMs?: number },
+): Promise<RunResult> {
+  // A loader that flips isTTY before handing off to the real bundle. argv[1]
+  // is rewritten so the CLI's own argv parsing lines up as if run directly.
+  const shim = join(sandbox.root, 'tty-shim.mjs')
+  await writeFile(
+    shim,
+    [
+      `process.stdin.isTTY = true`,
+      `process.stdin.setRawMode = () => process.stdin`,
+      `process.argv.splice(1, 1, ${JSON.stringify(CLI)})`,
+      // A bare path is not a valid ESM specifier on Windows, where it reads
+      // as a URL with a "c:" scheme; import via a file:// URL instead.
+      `await import(${JSON.stringify(pathToFileURL(CLI).href)})`,
+    ].join('\n'),
+  )
+
+  const child = spawn(process.execPath, [shim, ...args], {
+    cwd: sandbox.root,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      HOME: sandbox.root,
+      USERPROFILE: sandbox.root,
+      GROVE_REPOS_FILE: sandbox.reposFile,
+      GROVE_DEFAULT_CODE_DIR: join(sandbox.root, 'code'),
+      GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
+      GIT_CONFIG_SYSTEM: NULL_DEVICE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.autocrlf',
+      GIT_CONFIG_VALUE_0: 'false',
+      GIT_AUTHOR_NAME: 'Test',
+      GIT_AUTHOR_EMAIL: 'test@example.com',
+      GIT_COMMITTER_NAME: 'Test',
+      GIT_COMMITTER_EMAIL: 'test@example.com',
+      ...extraEnv,
+    },
+  })
+
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk) => (stdout += chunk))
+
+  // Accept the prompt's default, but only once the prompt is actually on
+  // screen — clack is not listening before then, and an Enter sent early is
+  // dropped. A carriage return is what a real terminal sends in raw mode.
+  let answered = false
+  const matches = (text: string) =>
+    typeof answerWhen === 'string' ? text.includes(answerWhen) : answerWhen.test(text)
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk
+    if (!answered && matches(stderr)) {
+      answered = true
+      // End stdin after the answer: clack puts the pipe in raw mode and keeps
+      // it open, which holds the child's event loop open after it has finished.
+      child.stdin.end('\r')
+    }
+  })
+
+  let timedOut = false
+  const abort = setTimeout(() => {
+    timedOut = true
+    child.kill('SIGKILL')
+  }, timeoutMs)
+
+  const exitCode = await new Promise<number>((resolve) => {
+    // A signal-killed child reports a null code, which would otherwise be
+    // indistinguishable from an ordinary failure.
+    child.on('close', (code, signal) => resolve(code ?? (signal ? -1 : 1)))
+  })
+  clearTimeout(abort)
+
+  if (timedOut) {
+    throw new Error(
+      `CLI timed out after ${timeoutMs}ms waiting for ${String(answerWhen)} on stderr.\n` +
+        `--- stderr ---\n${stderr}\n--- stdout ---\n${stdout}`,
+    )
+  }
+
+  return makeResult(stdout, stderr, exitCode)
 }
 
 export { git as gitIn }

@@ -172,4 +172,22 @@ describe('repoNameFromUrl', () => {
   it('handles ssh:// URLs with a port', () => {
     expect(repoNameFromUrl('ssh://git@host:7999/proj/my-repo.git')).toBe('my-repo')
   })
+
+  it('handles POSIX filesystem paths', () => {
+    expect(repoNameFromUrl('/srv/git/my-repo.git')).toBe('my-repo')
+  })
+
+  // A drive letter ends in a colon, so splitting on ':' alone would cut at
+  // `C:` and return the rest of the path as the name.
+  it('handles Windows paths with a drive letter', () => {
+    expect(repoNameFromUrl('C:\\repos\\my-repo.git')).toBe('my-repo')
+  })
+
+  it('handles Windows UNC paths', () => {
+    expect(repoNameFromUrl('\\\\server\\share\\my-repo.git')).toBe('my-repo')
+  })
+
+  it('handles Windows paths with a trailing separator', () => {
+    expect(repoNameFromUrl('C:\\repos\\my-repo\\')).toBe('my-repo')
+  })
 })

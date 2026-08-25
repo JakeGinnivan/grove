@@ -42,6 +42,16 @@ function profileGitconfig(profile: ResolvedProfile): string {
 }
 
 /**
+ * git config reads `\` as an escape character, so a Windows path written
+ * verbatim into a `gitdir:` pattern never matches and a `path` value is
+ * mangled. git accepts forward slashes on every platform, so paths are
+ * spelled that way inside config files regardless of the host separator.
+ */
+function forGitConfig(path: string): string {
+  return path.replaceAll('\\', '/')
+}
+
+/**
  * The includeIf stanzas the global gitconfig needs, as one managed block.
  * With no profiles the block is emitted empty so a prior one is cleared.
  */
@@ -52,8 +62,8 @@ function globalIncludeBlock(profiles: ResolvedProfile[]): string {
     // gitdir requires a trailing slash to match everything beneath the dir.
     lines.push(
       '',
-      `[includeIf "gitdir:${profile.dir}/"]`,
-      `\tpath = ${profileGitconfigPath(profile)}`,
+      `[includeIf "gitdir:${forGitConfig(profile.dir)}/"]`,
+      `\tpath = ${forGitConfig(profileGitconfigPath(profile))}`,
     )
   }
   lines.push(END, '')

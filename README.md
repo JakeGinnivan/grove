@@ -354,6 +354,11 @@ The second line makes `ms` an alias.
 
 ## Development
 
+Node 24+ and pnpm 11+. With [mise](https://mise.jdx.dev), `mise install` picks
+both up from `mise.toml`; otherwise see [pnpm's install
+guide](https://pnpm.io/installation) — pnpm ships a native binary, so Corepack
+is not involved (Node removed it in v25).
+
 ```bash
 pnpm install
 pnpm build       # bundle to dist/
@@ -365,7 +370,7 @@ Built with TypeScript 7. Integration tests run the built bundle against
 throwaway git repos with a redirected `HOME`, so they exercise what ships
 without touching your real configuration.
 
-CI runs the suite on Node 20 and 24 across Linux, macOS, and Windows.
+CI runs the suite on Node 24 across Linux, macOS, and Windows.
 
 ## Releasing
 

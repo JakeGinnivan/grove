@@ -26,27 +26,29 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
-
-      # Deliberately no `registry-url`: it writes an auth line into .npmrc,
-      # and npm then skips the OIDC exchange and publishes as anonymous —
+      # Installs pnpm (its native per-platform binary), Node, and the
+      # dependencies in one step; the pnpm version comes from
+      # `packageManager` in package.json.
+      #
+      # Deliberately no registry auth is configured here: writing an auth line
+      # into .npmrc makes npm skip the OIDC exchange and publish as anonymous —
       # surfacing as a bare 404. https://github.com/changesets/changesets/issues/1914
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
-          node-version: 24
-          cache: pnpm
+          runtime: node@24
+          cache: true
 
-      # Trusted publishing needs npm >= 11.5.1. Node 24 ships a new enough npm
-      # today, but the bundled version drifts; pinning it here keeps a runner
-      # image update from turning into a mystery 404 at publish time.
-      - name: Ensure npm supports trusted publishing
-        run: npm install -g npm@latest
-
-      - run: pnpm install --frozen-lockfile
-
+      # Changesets detects pnpm and runs `pnpm publish`, so pnpm — not npm — is
+      # what performs the OIDC exchange, at the version from `packageManager`
+      # above. Keep that at 11.1.3 or newer: 11.0.x–11.1.2 sent unresolved
+      # .npmrc placeholders as a bearer token and 404'd instead of falling back
+      # to OIDC (pnpm/pnpm#11526). npm only needs to be on PATH at any version,
+      # for the unauthenticated `npm info` published-version check.
+      #
       # No NPM_TOKEN anywhere: authentication is the OIDC exchange, and
       # provenance is automatic because of it. GITHUB_TOKEN is only for
-      # opening the version PR and reading PR titles for the changelog.
+      # opening and pushing the version PR — the changelog is generated from
+      # commits by @changesets/changelog-git and needs no API access.
       - name: Create version PR or publish
         uses: changesets/action@3841a0683d3cfa6dae0f9bb335290003010fe3f0 # v1.9.0
         with:

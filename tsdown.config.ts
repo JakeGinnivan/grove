@@ -3,7 +3,7 @@ import { defineConfig } from 'tsdown'
 export default defineConfig({
   entry: ['src/cli.ts'],
   format: ['esm'],
-  target: 'node20',
+  target: 'node24',
   clean: true,
   dts: false,
   // Skill markdown ships alongside the bundle; `skills install` reads it

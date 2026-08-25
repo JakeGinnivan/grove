@@ -91,12 +91,27 @@ export function worktreeDirForBranch(branch: string, date = new Date()): string 
   return `${datePrefix(date)}-${slug}`
 }
 
-/** Extract a repo name from a clone URL, handling ssh, https, and scp forms. */
+/**
+ * Extract a repo name from a clone URL, handling ssh, https, scp, and local
+ * filesystem paths.
+ *
+ * The separator is the last `/`, `\`, or `:` — the colon covers the scp form
+ * (`git@host:owner/repo`), and the backslash covers Windows paths. Taking the
+ * last of the three is what keeps a Windows drive letter from mattering: in
+ * `C:\repos\thing.git` the backslash sits past the colon, so the cut lands
+ * after `repos\` rather than after `C:`. Same for a port in a URL
+ * (`ssh://host:7999/owner/repo`), where the later `/` wins over the `:`.
+ */
 export function repoNameFromUrl(url: string): string {
-  const cleaned = url.trim().replace(/\/+$/, '').replace(/\.git$/, '')
-  const lastSlash = cleaned.lastIndexOf('/')
-  const lastColon = cleaned.lastIndexOf(':')
-  const cut = Math.max(lastSlash, lastColon)
+  const cleaned = url
+    .trim()
+    .replace(/[/\\]+$/, '')
+    .replace(/\.git$/, '')
+  const cut = Math.max(
+    cleaned.lastIndexOf('/'),
+    cleaned.lastIndexOf('\\'),
+    cleaned.lastIndexOf(':'),
+  )
   const name = cut >= 0 ? cleaned.slice(cut + 1) : cleaned
   if (!name) {
     throw new Error(`Could not determine a repo name from URL: ${url}`)

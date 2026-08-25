@@ -97,7 +97,17 @@ async function syncOne(reposFile: string, name: string): Promise<SyncResult> {
     to: null,
   }
 
-  await git(['fetch', 'origin', '--prune'], { cwd: gitDir, allowFailure: true })
+  // A failed fetch must not read as "already up to date": origin/* would
+  // still point at the old commit, the fast-forward below would be a no-op,
+  // and sync would report success having reached nothing.
+  const fetched = await git(['fetch', 'origin', '--prune'], {
+    cwd: gitDir,
+    allowFailure: true,
+  })
+  if (fetched.exitCode !== 0) {
+    result.skipped = `fetch failed: ${fetched.stderr.split('\n')[0] ?? ''}`
+    return result
+  }
 
   // Only fast-forward when the main checkout is clean and on the default
   // branch; anything else risks clobbering in-progress work.

@@ -1,0 +1,7 @@
+# Toolchain for this repo, matching CI. `mise install` sets both up.
+#
+# pnpm is installed as its native per-platform binary — no Node.js launcher
+# and no Corepack, which Node removed in v25.
+[tools]
+node = "24"
+pnpm = "11.23.0"

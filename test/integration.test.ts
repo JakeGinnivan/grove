@@ -5,10 +5,18 @@ import { join } from 'node:path'
 import {
   createSandbox,
   runCli,
+  runCliWithTty,
   gitIn,
   gitWithGlobalConfig,
   type Sandbox,
 } from './helpers/sandbox.js'
+
+/**
+ * grove spells paths with forward slashes inside git config files, because
+ * git reads `\` as an escape character. Mirror that when asserting on the
+ * generated config so these expectations hold on Windows too.
+ */
+const inGitConfig = (path: string) => path.replaceAll('\\', '/')
 
 let sandbox: Sandbox
 
@@ -382,18 +390,41 @@ describe('wt sync', () => {
     await gitIn(['commit', '-m', 'upstream work'], helper)
     await gitIn(['push'], helper)
 
+    // Guard the setup: if the push did not land, the sync assertions below
+    // would fail for a reason that has nothing to do with sync.
+    const pushed = await gitIn(['rev-parse', 'HEAD'], helper)
+    const onRemote = await gitIn(['rev-parse', 'main'], sandbox.remote)
+    expect(onRemote).toBe(pushed)
+
     const before = await gitIn(['rev-parse', 'HEAD'], sandbox.mainPath)
     const result = await runCli(['sync', 'demo', '--json'], sandbox)
     expect(result.exitCode).toBe(0)
     const data = result.json<{
       results: { updated: boolean; skipped: string | null }[]
     }>()
-    expect(data.results[0]?.updated).toBe(true)
-    expect(data.results[0]?.skipped).toBeNull()
+    // Assert on the whole result: a skip reason explains a failure here far
+    // better than a bare `expected false to be true`.
+    expect(data.results[0]).toMatchObject({ updated: true, skipped: null })
 
     const after = await gitIn(['rev-parse', 'HEAD'], sandbox.mainPath)
     expect(after).not.toBe(before)
     expect(existsSync(join(sandbox.mainPath, 'new.txt'))).toBe(true)
+  })
+
+  it('reports a failed fetch instead of "already up to date"', async () => {
+    // Make origin unreachable. Without a fetch check, origin/* still points at
+    // the old commit, the fast-forward no-ops, and sync looks successful.
+    await gitIn(
+      ['remote', 'set-url', 'origin', join(sandbox.root, 'missing.git')],
+      sandbox.mainPath,
+    )
+
+    const result = await runCli(['sync', 'demo', '--json'], sandbox)
+    const data = result.json<{
+      results: { updated: boolean; skipped: string | null }[]
+    }>()
+    expect(data.results[0]?.updated).toBe(false)
+    expect(data.results[0]?.skipped).toMatch(/^fetch failed:/)
   })
 
   it('reports no-op when already current', async () => {
@@ -616,7 +647,10 @@ describe('wt skills install', () => {
     const target = join(sandbox.root, 'skills-target')
     await runCli(['skills', 'install', '--target', target, '--json'], sandbox)
     const content = await readFile(join(target, 'wt-worktree', 'SKILL.md'), 'utf8')
-    expect(content).toMatch(/^---\nname: wt-worktree\ndescription: .+/m)
+    // git may check the template out with CRLF endings on Windows.
+    expect(content.replace(/\r\n/g, '\n')).toMatch(
+      /^---\nname: wt-worktree\ndescription: .+/m,
+    )
   })
 })
 
@@ -651,6 +685,27 @@ describe('shell integration', () => {
     const pwsh = await runCli(['shell-init', 'powershell'], sandbox)
     expect(pwsh.stdout).toContain('Set-Location')
   })
+
+  /**
+   * The wrapper reads stdout with `$(...)`, so a prompt rendered there would
+   * be invisible to the user and would wreck the sentinel line the wrapper
+   * matches on. Prompts must therefore render to stderr.
+   */
+  it('renders prompts on stderr, leaving stdout as a clean sentinel', async () => {
+    const result = await runCliWithTty(
+      ['clone', sandbox.remote, 'prompted'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Short alias for' },
+    )
+
+    // The alias prompt was shown, and it was shown on stderr.
+    expect(result.stderr).toContain('Short alias for')
+
+    // stdout carries the sentinel and nothing else, so the wrapper can cd.
+    const mainPath = join(sandbox.root, 'code', 'prompted', 'main')
+    expect(result.stdout.trim()).toBe(`__WT_CD__${mainPath}`)
+  }, 30_000)
 })
 
 describe('grove __complete', () => {
@@ -873,7 +928,9 @@ describe('grove profile add writes config immediately', () => {
     expect(profileConfig).toContain('# Profile: work')
 
     const globalConfig = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(globalConfig).toContain(`[includeIf "gitdir:${workDir}/"]`)
+    expect(globalConfig).toContain(
+      `[includeIf "gitdir:${inGitConfig(workDir)}/"]`,
+    )
 
     const settings = JSON.parse(
       await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
@@ -917,14 +974,14 @@ describe('grove profile add writes config immediately', () => {
     await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
     await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
     expect(await readFile(join(sandbox.root, '.gitconfig'), 'utf8')).toContain(
-      `gitdir:${workDir}/`,
+      `gitdir:${inGitConfig(workDir)}/`,
     )
 
     await runCli(['profile', 'remove', 'work', '--json'], sandbox)
     const after = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(after).not.toContain(`gitdir:${workDir}/`)
+    expect(after).not.toContain(`gitdir:${inGitConfig(workDir)}/`)
     // The surviving profile keeps its stanza.
-    expect(after).toContain(`gitdir:${ossDir}/`)
+    expect(after).toContain(`gitdir:${inGitConfig(ossDir)}/`)
   })
 
   it('removing a profile strips the managed block but keeps hand-written config', async () => {
@@ -974,7 +1031,9 @@ describe('grove profile apply', () => {
 
     // Global gitconfig includes it only for paths under the profile dir.
     const globalConfig = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(globalConfig).toContain(`[includeIf "gitdir:${workDir}/"]`)
+    expect(globalConfig).toContain(
+      `[includeIf "gitdir:${inGitConfig(workDir)}/"]`,
+    )
 
     // Claude gains read access to the profile directory.
     const settings = JSON.parse(

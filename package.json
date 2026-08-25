@@ -10,13 +10,13 @@
   ],
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/JakeGinnivan/worktree-cli#readme",
+  "homepage": "https://github.com/JakeGinnivan/grove#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JakeGinnivan/worktree-cli.git"
+    "url": "git+https://github.com/JakeGinnivan/grove.git"
   },
   "bugs": {
-    "url": "https://github.com/JakeGinnivan/worktree-cli/issues"
+    "url": "https://github.com/JakeGinnivan/grove/issues"
   },
   "engines": {
     "node": ">=24"

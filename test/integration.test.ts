@@ -153,7 +153,7 @@ describe('wt new', () => {
       JSON.stringify({ 'setup-worktree': ['echo hi > setup-ran.txt'] }),
     )
     const result = await runCli(
-      ['new', 'demo', '--title', 'with setup', '--json'],
+      ['new', 'demo', '--title', 'with setup', '--setup', '--json'],
       sandbox,
     )
     const data = result.json<{ path: string }>()
@@ -173,13 +173,13 @@ describe('wt new', () => {
     expect(existsSync(join(data.path, 'setup-ran.txt'))).toBe(false)
   })
 
-  it('skips setup commands with --no-setup', async () => {
+  it('does not run setup commands unless explicitly trusted', async () => {
     await writeFile(
       join(sandbox.mainPath, 'worktree.json'),
       JSON.stringify({ 'setup-worktree': ['echo hi > setup-ran.txt'] }),
     )
     const result = await runCli(
-      ['new', 'demo', '--title', 'no setup', '--no-setup', '--json'],
+      ['new', 'demo', '--title', 'no setup', '--json'],
       sandbox,
     )
     const data = result.json<{ path: string }>()
@@ -433,6 +433,14 @@ describe('wt sync', () => {
     expect(data.results[0]?.updated).toBe(false)
   })
 
+  it('refuses to update a detached main checkout', async () => {
+    await gitIn(['checkout', '--detach'], sandbox.mainPath)
+
+    const result = await runCli(['sync', 'demo', '--json'], sandbox)
+    const data = result.json<{ results: { skipped: string | null }[] }>()
+    expect(data.results[0]?.skipped).toMatch(/detached/)
+  })
+
   it('refuses to touch a dirty main checkout', async () => {
     await writeFile(join(sandbox.mainPath, 'local.txt'), 'wip\n')
     const result = await runCli(['sync', 'demo', '--json'], sandbox)
@@ -457,6 +465,22 @@ describe('wt cleanup', () => {
     const data = result.json<{ removed: { removed: boolean }[] }>()
     expect(data.removed[0]?.removed).toBe(true)
     expect(existsSync(path)).toBe(false)
+  })
+
+  it('requires --yes before non-interactive removal', async () => {
+    const created = await runCli(
+      ['new', 'demo', '--title', 'needs consent', '--json'],
+      sandbox,
+    )
+    const path = created.json<{ path: string }>().path
+
+    const result = await runCli(
+      ['cleanup', 'demo', path, '--no-trash', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(2)
+    expect(result.json<{ error: { code: string } }>().error.code).toBe('needs_input')
+    expect(existsSync(path)).toBe(true)
   })
 
   it('skips a dirty worktree unless forced', async () => {
@@ -541,6 +565,44 @@ describe('wt cleanup', () => {
     const list = await runCli(['list', 'demo', '--json'], sandbox)
     const worktrees = list.json<{ worktrees: { path: string }[] }>().worktrees
     expect(worktrees.map((wt) => wt.path)).not.toContain(path)
+  })
+
+  it('does not permanently delete when moving to trash fails', async () => {
+    const created = await runCli(
+      ['new', 'demo', '--title', 'trash failure', '--json'],
+      sandbox,
+    )
+    const path = created.json<{ path: string }>().path
+
+    // Moving a directory into one of its own descendants always fails.
+    const result = await runCli(
+      ['cleanup', 'demo', path, '--force', '--json'],
+      sandbox,
+      { GROVE_TRASH_DIR: join(path, 'trash') },
+    )
+    const data = result.json<{
+      removed: { removed: boolean; skipped: string }[]
+    }>()
+    expect(data.removed[0]?.removed).toBe(false)
+    expect(data.removed[0]?.skipped).toMatch(/--no-trash/)
+    expect(existsSync(path)).toBe(true)
+  })
+
+  it('aborts when git cannot inspect worktree status', async () => {
+    const created = await runCli(
+      ['new', 'demo', '--title', 'broken metadata', '--json'],
+      sandbox,
+    )
+    const path = created.json<{ path: string }>().path
+    await writeFile(join(path, '.git'), 'gitdir: /definitely/missing\n')
+
+    const result = await runCli(
+      ['cleanup', 'demo', path, '--yes', '--no-trash', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(1)
+    expect(result.json<{ error: { code: string } }>().error.code).toBe('git_failed')
+    expect(existsSync(path)).toBe(true)
   })
 
   it('deletes the branch with --delete-branch', async () => {
@@ -982,6 +1044,31 @@ describe('grove profile add writes config immediately', () => {
     expect(after).not.toContain(`gitdir:${inGitConfig(workDir)}/`)
     // The surviving profile keeps its stanza.
     expect(after).toContain(`gitdir:${inGitConfig(ossDir)}/`)
+  })
+
+  it('removing a profile revokes only Claude permissions Grove added', async () => {
+    const workDir = join(sandbox.root, 'work')
+    await mkdir(join(sandbox.root, '.claude'), { recursive: true })
+    await writeFile(
+      join(sandbox.root, '.claude', 'settings.json'),
+      JSON.stringify({
+        permissions: {
+          additionalDirectories: ['/user-owned'],
+          allow: ['Read(/user-owned/**)'],
+        },
+      }),
+    )
+
+    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await runCli(['profile', 'remove', 'work', '--json'], sandbox)
+
+    const settings = JSON.parse(
+      await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
+    ) as { permissions: { additionalDirectories: string[]; allow: string[] } }
+    expect(settings.permissions.additionalDirectories).not.toContain(workDir)
+    expect(settings.permissions.allow).not.toContain(`Read(${workDir}/**)`)
+    expect(settings.permissions.additionalDirectories).toContain('/user-owned')
+    expect(settings.permissions.allow).toContain('Read(/user-owned/**)')
   })
 
   it('removing a profile strips the managed block but keeps hand-written config', async () => {

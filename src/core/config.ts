@@ -33,6 +33,11 @@ export interface GroveConfig {
   defaultProfile?: string
   /** Move removed worktrees to the trash instead of deleting them. */
   useTrash: boolean
+  /** Claude permission entries owned by Grove, used to revoke stale grants. */
+  managedClaudePermissions?: {
+    additionalDirectories: string[]
+    allow: string[]
+  }
 }
 
 export const CONFIG_DIR = join(homedir(), '.config', 'grove')

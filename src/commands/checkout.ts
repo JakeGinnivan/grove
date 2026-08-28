@@ -28,6 +28,7 @@ export function checkoutCommand(): Command {
     )
     .option('--base <ref>', 'when creating, base the branch on this ref')
     .option('--no-fetch', 'skip fetching origin first')
+    .option('--setup', 'run trusted repo-defined worktree setup commands', false)
     .option('--no-setup', 'skip repo-defined worktree setup commands')
     .action(async (repoArg, branchArg, options) => {
       await runCheckout(repoArg, branchArg, options)
@@ -108,7 +109,7 @@ async function runCheckout(
       branch,
       useExistingBranch: true,
       noFetch: true,
-      noSetup: !options.setup,
+      setup: options.setup,
     })
   } else if (resolution.exists === 'remote') {
     // `worktree add <path> <branch>` with no local branch creates one that
@@ -121,7 +122,7 @@ async function runCheckout(
       useExistingBranch: true,
       track: resolution.track,
       noFetch: true,
-      noSetup: !options.setup,
+      setup: options.setup,
     })
   } else {
     const { base, parent } = await resolveBase(gitDir, {
@@ -137,7 +138,7 @@ async function runCheckout(
       base,
       parentBranch: parent,
       noFetch: true,
-      noSetup: !options.setup,
+      setup: options.setup,
     })
   }
 

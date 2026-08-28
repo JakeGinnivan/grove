@@ -205,7 +205,6 @@ export async function currentBranch(dir: string): Promise<string | undefined> {
 export async function isDirty(dir: string): Promise<boolean> {
   const { stdout } = await git(['status', '--porcelain'], {
     cwd: dir,
-    allowFailure: true,
   })
   return stdout.length > 0
 }
@@ -225,9 +224,14 @@ export async function aheadCount(
 ): Promise<number> {
   const { stdout } = await git(['rev-list', '--count', `${upstream}..HEAD`], {
     cwd: dir,
-    allowFailure: true,
   })
-  return Number.parseInt(stdout, 10) || 0
+  const count = Number.parseInt(stdout, 10)
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new WtError(`git returned an invalid ahead count: ${stdout}`, {
+      code: 'git_invalid_output',
+    })
+  }
+  return count
 }
 
 /** True when `ref` is fully contained in `base` (i.e. merged). */

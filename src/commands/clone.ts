@@ -12,7 +12,11 @@ import {
   type ResolvedProfile,
   type GroveConfig,
 } from '../core/config.js'
-import { writeRepo } from '../core/registry.js'
+import {
+  registryIdentifierProblem,
+  validateRegistryIdentifier,
+  writeRepo,
+} from '../core/registry.js'
 import { repoNameFromUrl } from '../core/naming.js'
 import { git } from '../core/git.js'
 import { optionalText, select, canPrompt } from '../core/prompts.js'
@@ -84,6 +88,10 @@ async function runClone(
 ): Promise<void> {
   const config = await loadConfig()
   const repoName = nameArg ?? repoNameFromUrl(url)
+  validateRegistryIdentifier(repoName)
+  if (typeof options.alias === 'string') {
+    validateRegistryIdentifier(options.alias)
+  }
 
   const profile = options.dir
     ? undefined
@@ -124,6 +132,7 @@ async function runClone(
     alias = await optionalText(undefined, {
       message: `Short alias for "${repoName}"? (optional)`,
       placeholder: repoName.slice(0, 3),
+      validate: registryIdentifierProblem,
     })
   }
 

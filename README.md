@@ -323,8 +323,10 @@ or `.cursor/worktrees.json` committed at the root of the repo itself (the
 ```
 
 Commands run inside the new worktree with `ROOT_WORKTREE_PATH` pointing at the
-main checkout. A failing command warns and continues rather than aborting the
-worktree. Skip them with `--no-setup`.
+main checkout. Because this is arbitrary repository-controlled shell code,
+Grove does not run it by default. Review the file first, then opt in with
+`--setup`. A failing command warns and continues rather than aborting the
+worktree. The older `--no-setup` flag remains accepted for compatibility.
 
 ## Configuration
 
@@ -338,6 +340,7 @@ worktree. Skip them with `--no-setup`.
 | `defaultProfile` | Profile used when `--profile` is not given |
 | `reposFile` | Repo registry location (default `~/.wt_repos`) |
 | `useTrash` | Trash removed worktrees instead of deleting |
+| `managedClaudePermissions` | Internal ownership record used to revoke only Claude grants Grove added |
 
 `GROVE_BRANCH_PREFIX`, `GROVE_DEFAULT_CODE_DIR`, `GROVE_REPOS_FILE`, and
 `GROVE_TRASH_DIR` override the file. The older `WT_*` names are still honoured.

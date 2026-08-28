@@ -40,8 +40,8 @@ export interface CreateWorktreeOptions {
   track?: string | undefined
   /** Skip `git fetch` before creating. */
   noFetch?: boolean
-  /** Skip repo-defined setup commands. */
-  noSetup?: boolean
+  /** Run trusted repo-defined setup commands. Disabled by default. */
+  setup?: boolean
 }
 
 export interface CreatedWorktree {
@@ -108,7 +108,7 @@ export async function createWorktree(
     useExistingBranch = false,
     track,
     noFetch = false,
-    noSetup = false,
+    setup = false,
   } = options
 
   const fullPath = join(repoPath, worktreeDir)
@@ -166,7 +166,7 @@ export async function createWorktree(
     await setConfig(gitDir, PARENT_CONFIG_KEY(branch), parentBranch)
   }
 
-  if (!noSetup) {
+  if (setup) {
     const rootWorktree = existsSync(join(repoPath, 'main'))
       ? join(repoPath, 'main')
       : gitDir

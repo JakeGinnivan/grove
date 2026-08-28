@@ -3,7 +3,7 @@ import { join, sep } from 'node:path'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import type { GroveConfig, ResolvedProfile } from './config.js'
-import { profileList } from './config.js'
+import { CONFIG_PATH, profileList } from './config.js'
 import { readRegistry } from './registry.js'
 
 /** Marker so grove only ever rewrites the block it owns. */
@@ -12,7 +12,7 @@ const END = '# <<< grove managed <<<'
 
 export interface PlannedChange {
   file: string
-  kind: 'git-include' | 'git-profile' | 'claude-permissions'
+  kind: 'git-include' | 'git-profile' | 'claude-permissions' | 'grove-config'
   description: string
   /** Full content the file will hold, for diffing/dry-run. */
   contents: string
@@ -165,7 +165,38 @@ export async function planProfileChanges(
 
   // 3. Claude permissions so agents can read across all profile directories.
   const claude = await planClaudePermissions(config)
-  if (claude) changes.push(claude)
+  if (claude.change) changes.push(claude.change)
+
+  // Record exactly which Claude grants Grove owns. This change is written
+  // after settings.json, so a failed permission update leaves the old
+  // ownership record available for a safe retry.
+  const previousManaged = config.managedClaudePermissions ?? {
+    additionalDirectories: [],
+    allow: [],
+  }
+  if (
+    JSON.stringify(previousManaged) !==
+    JSON.stringify(claude.managedPermissions)
+  ) {
+    const nextConfig: GroveConfig = { ...config }
+    if (
+      claude.managedPermissions.additionalDirectories.length > 0 ||
+      claude.managedPermissions.allow.length > 0
+    ) {
+      nextConfig.managedClaudePermissions = claude.managedPermissions
+    } else {
+      delete nextConfig.managedClaudePermissions
+    }
+    const existing = await readIfExists(CONFIG_PATH)
+    const contents = `${JSON.stringify(nextConfig, null, 2)}\n`
+    changes.push({
+      file: CONFIG_PATH,
+      kind: 'grove-config',
+      description: 'Track Claude permissions managed by Grove',
+      contents,
+      changed: contents !== existing,
+    })
+  }
 
   return changes
 }
@@ -201,7 +232,13 @@ interface ClaudeSettings {
 
 async function planClaudePermissions(
   config: GroveConfig,
-): Promise<PlannedChange | undefined> {
+): Promise<{
+  change: PlannedChange | undefined
+  managedPermissions: {
+    additionalDirectories: string[]
+    allow: string[]
+  }
+}> {
   // Grant access to every profile directory, plus the default clone
   // directory when repos actually live there. Directories already covered by
   // a broader entry are dropped so the permission list stays minimal.
@@ -212,8 +249,19 @@ async function planClaudePermissions(
   const unique = sorted.filter(
     (dir) => !sorted.some((other) => other !== dir && dir.startsWith(other + sep)),
   )
+  const previouslyManaged = config.managedClaudePermissions ?? {
+    additionalDirectories: [],
+    allow: [],
+  }
 
   const existingRaw = await readIfExists(CLAUDE_SETTINGS)
+  if (!existingRaw.trim() && unique.length === 0) {
+    return {
+      change: undefined,
+      managedPermissions: { additionalDirectories: [], allow: [] },
+    }
+  }
+
   let settings: ClaudeSettings = {}
   if (existingRaw.trim()) {
     try {
@@ -221,21 +269,49 @@ async function planClaudePermissions(
     } catch {
       // Never clobber a settings file we cannot parse.
       return {
-        file: CLAUDE_SETTINGS,
-        kind: 'claude-permissions',
-        description: 'SKIPPED — settings.json is not valid JSON',
-        contents: existingRaw,
-        changed: false,
+        change: {
+          file: CLAUDE_SETTINGS,
+          kind: 'claude-permissions',
+          description: 'SKIPPED — settings.json is not valid JSON',
+          contents: existingRaw,
+          changed: false,
+        },
+        managedPermissions: previouslyManaged,
       }
     }
   }
 
   const permissions = { ...(settings.permissions ?? {}) }
-  const additional = new Set(permissions.additionalDirectories ?? [])
-  const allow = new Set(permissions.allow ?? [])
+  const additional = new Set(
+    Array.isArray(permissions.additionalDirectories)
+      ? permissions.additionalDirectories.filter(
+          (value): value is string => typeof value === 'string',
+        )
+      : [],
+  )
+  const allow = new Set(
+    Array.isArray(permissions.allow)
+      ? permissions.allow.filter((value): value is string => typeof value === 'string')
+      : [],
+  )
+  for (const dir of previouslyManaged.additionalDirectories) {
+    additional.delete(dir)
+  }
+  for (const rule of previouslyManaged.allow) {
+    allow.delete(rule)
+  }
+  const managedAdditionalDirectories: string[] = []
+  const managedAllow: string[] = []
   for (const dir of unique) {
-    additional.add(dir)
-    allow.add(`Read(${dir}/**)`)
+    if (!additional.has(dir)) {
+      additional.add(dir)
+      managedAdditionalDirectories.push(dir)
+    }
+    const rule = `Read(${dir}/**)`
+    if (!allow.has(rule)) {
+      allow.add(rule)
+      managedAllow.push(rule)
+    }
   }
 
   // Both sorted so re-running apply produces no spurious diff in the user's
@@ -246,11 +322,17 @@ async function planClaudePermissions(
   const contents = `${JSON.stringify(next, null, 2)}\n`
 
   return {
-    file: CLAUDE_SETTINGS,
-    kind: 'claude-permissions',
-    description: `Allow reading ${unique.length} code director${unique.length === 1 ? 'y' : 'ies'}`,
-    contents,
-    changed: contents !== existingRaw,
+    change: {
+      file: CLAUDE_SETTINGS,
+      kind: 'claude-permissions',
+      description: `Allow reading ${unique.length} code director${unique.length === 1 ? 'y' : 'ies'}`,
+      contents,
+      changed: contents !== existingRaw,
+    },
+    managedPermissions: {
+      additionalDirectories: managedAdditionalDirectories.sort(),
+      allow: managedAllow.sort(),
+    },
   }
 }
 

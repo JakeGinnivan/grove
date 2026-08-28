@@ -25,6 +25,7 @@ export function newCommand(): Command {
     .option('-b, --branch <name>', 'override the generated branch name')
     .option('-d, --dir <name>', 'override the generated worktree directory name')
     .option('--no-fetch', 'skip fetching origin first')
+    .option('--setup', 'run trusted repo-defined worktree setup commands', false)
     .option('--no-setup', 'skip repo-defined worktree setup commands')
     .option('-y, --yes', 'skip the confirmation prompt')
     .action(async (repoArg, titleArg, options) => {
@@ -130,7 +131,7 @@ async function runNew(
     base,
     parentBranch: parent,
     noFetch: !options.fetch,
-    noSetup: !options.setup,
+    setup: options.setup,
   })
 
   if (getOutputContext().json) {

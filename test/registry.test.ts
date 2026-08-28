@@ -61,6 +61,23 @@ describe('readRegistry', () => {
   })
 })
 
+describe('writeRepo validation', () => {
+  it('rejects names and aliases that cannot round-trip through the registry', async () => {
+    await expect(
+      writeRepo(reposFile, 'two words', '/code/repo'),
+    ).rejects.toMatchObject({ code: 'invalid_registry_name' })
+    await expect(
+      writeRepo(reposFile, 'valid', '/code/repo', '#comment'),
+    ).rejects.toMatchObject({ code: 'invalid_registry_name' })
+  })
+
+  it('rejects paths containing record delimiters', async () => {
+    await expect(
+      writeRepo(reposFile, 'valid', '/code/one\ntwo'),
+    ).rejects.toMatchObject({ code: 'invalid_registry_path' })
+  })
+})
+
 describe('writeRepo', () => {
   it('creates the file and writes an entry', async () => {
     await writeRepo(reposFile, 'my-repo', '/code/my-repo')

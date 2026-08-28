@@ -25,9 +25,9 @@ Find repos, their paths, and their profile rules with the `wt-repos` skill.
 
 ## Always pass --json
 
-Every command below prompts when run in a terminal. As an agent you must
-suppress that. `--json` implies non-interactive and prints a machine-readable
-result on stdout:
+Commands may prompt when run in a terminal. As an agent you must suppress that.
+`--json` implies non-interactive and prints a machine-readable result on
+stdout:
 
 ```bash
 grove new my-service --title "fix flaky login test" --json
@@ -64,7 +64,9 @@ Useful flags:
   A key already present in the title is picked up automatically.
 - `--no-jira` — never prompt for or infer a ticket key.
 - `--branch <name>` — override the generated branch name.
-- `--no-setup` — skip repo-defined setup commands (dependency installs, etc).
+- `--setup` — run reviewed, trusted repo-defined setup commands. Never pass
+  this for an unfamiliar repository; setup is arbitrary shell code and is
+  disabled by default.
 
 ## Check out an existing branch
 

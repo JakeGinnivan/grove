@@ -13,6 +13,23 @@ export interface RepoEntry {
   aliasOf?: string
 }
 
+export function registryIdentifierProblem(value: string): string | undefined {
+  if (!value || value.startsWith('#') || /[\s\u0000-\u001f\u007f]/.test(value)) {
+    return 'Names and aliases must be non-empty and contain no whitespace or control characters.'
+  }
+  return undefined
+}
+
+export function validateRegistryIdentifier(value: string): void {
+  const problem = registryIdentifierProblem(value)
+  if (problem) {
+    throw new WtError(`Invalid repository name or alias: ${JSON.stringify(value)}`, {
+      code: 'invalid_registry_name',
+      hint: problem,
+    })
+  }
+}
+
 /**
  * The registry file format is line-based and shared with the original zsh
  * helper, so existing ~/.wt_repos files keep working:
@@ -88,6 +105,14 @@ export async function writeRepo(
   repoPath: string,
   alias?: string,
 ): Promise<void> {
+  validateRegistryIdentifier(repoName)
+  if (alias) validateRegistryIdentifier(alias)
+  if (/[\r\n\u0000]/.test(repoPath)) {
+    throw new WtError('Repository paths cannot contain newlines or null bytes.', {
+      code: 'invalid_registry_path',
+    })
+  }
+
   // Names and aliases share one namespace, and the rewrite below drops every
   // line keyed by either. Without this guard, registering an alias that
   // collides with an existing repo would silently delete that repo's entry.

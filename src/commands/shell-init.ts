@@ -201,6 +201,7 @@ ${commandLines}
                   '--branch[override branch name]:branch:' \\
                   '--dir[override directory name]:dir:' \\
                   '--no-fetch[skip fetching origin]' \\
+                  '--setup[run trusted repo setup commands]' \\
                   '--no-setup[skip repo setup commands]' \\
                   '(-y --yes)'{-y,--yes}'[skip confirmation]'
                 ;;

@@ -143,6 +143,16 @@ async function runCleanup(
     return
   }
 
+  const proceed = await confirm(`Remove ${selected.length} worktree(s)?`, {
+    assumeYes: (options.yes ?? false) || (options.force ?? false),
+    defaultValue: false,
+    what: 'Removing worktrees',
+  })
+  if (!proceed) {
+    log('Cancelled.')
+    return
+  }
+
   const outcomes: RemovalOutcome[] = []
   const useTrash = options.trash && config.useTrash && (await canTrash())
 
@@ -150,7 +160,6 @@ async function runCleanup(
     outcomes.push(
       await removeOne(gitDir, report, {
         force: options.force ?? false,
-        yes: options.yes ?? false,
         deleteBranch: options.deleteBranch ?? false,
         useTrash,
       }),
@@ -191,7 +200,6 @@ async function removeOne(
   report: WorktreeReport,
   options: {
     force: boolean
-    yes: boolean
     deleteBranch: boolean
     useTrash: boolean
   },
@@ -232,10 +240,9 @@ async function removeOne(
     }
   }
 
-  // `git worktree remove` always deletes the directory permanently, so to
-  // keep the files recoverable we move the directory to the trash first and
-  // then prune the now-stale registration. Falling back to git's own removal
-  // when trashing is unavailable or fails.
+  // `git worktree remove` always deletes the directory permanently, so move
+  // the directory to the trash first and then prune the stale registration.
+  // A failed trash move must not silently become a permanent deletion.
   if (options.useTrash) {
     const locked = await isLocked(gitDir, report.path)
     if (locked && !options.force) {
@@ -256,7 +263,9 @@ async function removeOne(
       await deleteBranchIfRequested(gitDir, report, options, outcome)
       return outcome
     }
-    warn(`Could not move ${report.path} to trash; deleting instead.`)
+    outcome.skipped =
+      'could not move worktree to trash; pass --no-trash to delete permanently'
+    return outcome
   }
 
   const args = ['worktree', 'remove']
@@ -356,7 +365,6 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
 
   const outcome = await removeOne(gitRoot, report, {
     force: options.force ?? false,
-    yes: options.yes ?? false,
     deleteBranch: options.deleteBranch ?? false,
     useTrash,
   })

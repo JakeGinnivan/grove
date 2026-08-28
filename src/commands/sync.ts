@@ -123,8 +123,10 @@ async function syncOne(reposFile: string, name: string): Promise<SyncResult> {
   }
 
   const expectedBranch = base.replace(/^origin\//, '')
-  if (branch && branch !== expectedBranch) {
-    result.skipped = `main worktree is on "${branch}", not "${expectedBranch}"`
+  if (branch !== expectedBranch) {
+    result.skipped = branch
+      ? `main worktree is on "${branch}", not "${expectedBranch}"`
+      : `main worktree is detached, not on "${expectedBranch}"`
     return result
   }
 

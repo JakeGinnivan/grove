@@ -271,3 +271,69 @@ export async function supportsWorktreeKeep(gitDir: string): Promise<boolean> {
   })
   return `${stdout}${stderr}`.includes('--keep')
 }
+
+export interface BranchInfo {
+  name: string
+  /** Where the branch was found. A local branch shadows its remote twin. */
+  source: 'local' | 'remote'
+  /** Relative age of the branch tip, e.g. "3 days ago". */
+  relativeDate: string
+  subject: string
+}
+
+/**
+ * Local branches plus the remote's, most recently committed first.
+ *
+ * Each branch appears once, under the name a user would type at a `checkout`
+ * prompt. A local branch shadows the `<remote>/` ref of the same name because
+ * that is what checkout resolves to, regardless of which tip is newer.
+ * `<remote>/HEAD` is excluded so the symbolic ref does not surface as a
+ * branch called "origin".
+ */
+export async function listBranches(
+  gitDir: string,
+  remote = 'origin',
+): Promise<BranchInfo[]> {
+  const format = [
+    '%(refname:short)',
+    '%(committerdate:relative)',
+    '%(contents:subject)',
+  ].join('%09')
+  const { stdout } = await git(
+    [
+      'for-each-ref',
+      '--sort=-committerdate',
+      `--format=${format}`,
+      `--exclude=refs/remotes/${remote}/HEAD`,
+      'refs/heads',
+      `refs/remotes/${remote}`,
+    ],
+    { cwd: gitDir, allowFailure: true },
+  )
+
+  const prefix = `${remote}/`
+  const byName = new Map<string, BranchInfo>()
+
+  for (const line of stdout.split('\n')) {
+    if (!line) continue
+    const [ref = '', relativeDate = '', ...rest] = line.split('\t')
+    const isRemote = ref.startsWith(prefix)
+    const name = isRemote ? ref.slice(prefix.length) : ref
+    if (!name || name === 'HEAD') continue
+
+    // Refs arrive newest-first, so the first sighting of a name is the one to
+    // keep — unless a local ref turns up later for a name first seen on the
+    // remote, which takes over as the entry checkout would resolve to.
+    const existing = byName.get(name)
+    if (existing && (isRemote || existing.source === 'local')) continue
+
+    byName.set(name, {
+      name,
+      source: isRemote ? 'remote' : 'local',
+      relativeDate,
+      subject: rest.join('\t'),
+    })
+  }
+
+  return [...byName.values()]
+}

@@ -101,9 +101,11 @@ wt checkout my-service colleague/their-branch
 ```
 
 Resolves a local branch first, then `origin/<branch>` (creating a local
-tracking branch). Omit the branch to pick interactively — or press
-<kbd>Tab</kbd> to see the available branches. Pass `--create` for a branch that
-does not exist yet.
+tracking branch). Omit the branch and you get a searchable list of every local
+and `origin/` branch, most recently committed first, annotated with its age and
+whether it is already checked out — type to filter by branch name or commit
+subject. Pass `--create` for a branch that does not exist yet, which prompts for
+the new name instead.
 
 ### Stack a branch on another
 

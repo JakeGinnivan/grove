@@ -60,11 +60,30 @@ async function git(
   args: string[],
   cwd: string,
   globalConfig = NULL_DEVICE,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
-    env: gitEnv(globalConfig),
+    env: { ...gitEnv(globalConfig), ...extraEnv },
   })
   return stdout.trim()
+}
+
+/**
+ * Commit with an explicit date on both the author and committer fields.
+ *
+ * Anything that orders branches by commit date needs the fixture's commits to
+ * be distinguishable, and commits made back to back in a test otherwise share
+ * a timestamp to the second.
+ */
+export async function commitAt(
+  args: string[],
+  cwd: string,
+  date: string,
+): Promise<string> {
+  return git(args, cwd, NULL_DEVICE, {
+    GIT_AUTHOR_DATE: date,
+    GIT_COMMITTER_DATE: date,
+  })
 }
 
 /**

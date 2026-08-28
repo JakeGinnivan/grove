@@ -8,8 +8,8 @@ import {
   resolveBase,
   resolveBranchForCheckout,
 } from '../core/worktree.js'
-import { git, listWorktrees } from '../core/git.js'
-import { requireText } from '../core/prompts.js'
+import { git, listWorktrees, listBranches } from '../core/git.js'
+import { canPrompt, requireText, searchSelect } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
 import { pickRepo } from './shared.js'
@@ -43,6 +43,66 @@ interface CheckoutOptions {
   setup: boolean
 }
 
+/**
+ * Resolve the branch argument, showing a searchable list of branches when it
+ * is omitted.
+ *
+ * `--create` means the user is naming a branch that does not exist yet, so
+ * there is nothing to list and the free-text prompt stands. The list is also
+ * skipped when the repo has no branches to offer, which leaves the original
+ * prompt (and its non-interactive error) as the fallback in every case the
+ * picker cannot serve.
+ */
+async function pickBranch(
+  provided: string | undefined,
+  gitDir: string,
+  options: CheckoutOptions,
+): Promise<string> {
+  const freeText = () =>
+    requireText(provided, {
+      message: 'Which branch?',
+      flag: '--create with a branch name, or pass the branch argument',
+      what: 'A branch name',
+      placeholder: 'feature/some-branch',
+    })
+
+  if (provided || options.create || !canPrompt()) return freeText()
+
+  const [branches, worktrees] = await Promise.all([
+    listBranches(gitDir),
+    listWorktrees(gitDir),
+  ])
+  if (branches.length === 0) return freeText()
+
+  const checkedOut = new Set(
+    worktrees.flatMap((wt) => (wt.branch ? [wt.branch] : [])),
+  )
+
+  return searchSelect(
+    'Which branch?',
+    branches.map((branch) => ({
+      value: branch.name,
+      label: branch.name,
+      // Branches already in a worktree stay selectable: checkout cds to the
+      // existing one, which is a reasonable thing to have asked for.
+      hint: checkedOut.has(branch.name)
+        ? `already checked out • ${branch.relativeDate}`
+        : [
+            branch.source === 'remote' ? 'origin' : 'local',
+            branch.relativeDate,
+            branch.subject,
+          ]
+            .filter(Boolean)
+            .join(' • '),
+    })),
+    'A branch name',
+    // Five rows keeps the prompt compact: the branches worth checking out are
+    // almost always the recently committed ones at the top, and anything
+    // older is a scroll or a search away.
+    { placeholder: 'type to filter', maxItems: 5 },
+  )
+}
+
 async function runCheckout(
   repoArg: string | undefined,
   branchArg: string | undefined,
@@ -59,12 +119,7 @@ async function runCheckout(
     await git(['fetch', 'origin', '--prune'], { cwd: gitDir, allowFailure: true })
   }
 
-  const branch = await requireText(branchArg, {
-    message: 'Which branch?',
-    flag: '--create with a branch name, or pass the branch argument',
-    what: 'A branch name',
-    placeholder: 'feature/some-branch',
-  })
+  const branch = await pickBranch(branchArg, gitDir, options)
 
   const resolution = await resolveBranchForCheckout(gitDir, branch)
 

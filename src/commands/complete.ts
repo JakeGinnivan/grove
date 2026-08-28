@@ -2,7 +2,7 @@ import { Command } from 'commander'
 import { basename } from 'node:path'
 import { loadConfig, profileList } from '../core/config.js'
 import { readRegistry, gitDirFor, resolveRepo } from '../core/registry.js'
-import { listWorktrees, git } from '../core/git.js'
+import { listWorktrees, listBranches } from '../core/git.js'
 
 /**
  * Machine-readable completion data for shell integration.
@@ -73,28 +73,13 @@ async function candidates(
       const checkedOut = new Set(
         worktrees.map((wt) => wt.branch).filter(Boolean) as string[],
       )
-      // Exclude symbolic refs so origin/HEAD does not surface as "origin".
-      const { stdout } = await git(
-        [
-          'for-each-ref',
-          '--format=%(refname:short)',
-          '--exclude=refs/remotes/*/HEAD',
-          'refs/heads',
-          'refs/remotes/origin',
-        ],
-        { cwd: gitDir, allowFailure: true },
+      const branches = await listBranches(gitDir)
+      return branches.map(
+        (branch) =>
+          `${branch.name}\t${
+            checkedOut.has(branch.name) ? 'already checked out' : 'branch'
+          }`,
       )
-      const seen = new Set<string>()
-      const branches: string[] = []
-      for (const raw of stdout.split('\n')) {
-        const name = raw.replace(/^origin\//, '')
-        if (!name || name === 'HEAD' || seen.has(name)) continue
-        seen.add(name)
-        branches.push(
-          `${name}\t${checkedOut.has(name) ? 'already checked out' : 'branch'}`,
-        )
-      }
-      return branches
     }
 
     default:

@@ -7,6 +7,7 @@ import {
   runCli,
   runCliWithTty,
   gitIn,
+  commitAt,
   gitWithGlobalConfig,
   type Sandbox,
 } from './helpers/sandbox.js'
@@ -357,6 +358,71 @@ describe('wt checkout', () => {
       'needs_input',
     )
   })
+
+  it('lists the branches to choose from when none is given', async () => {
+    // Publish a branch so the list has something beyond main to show.
+    const helper = join(sandbox.root, 'helper-pick')
+    await mkdir(helper, { recursive: true })
+    await gitIn(['clone', sandbox.remote, helper], sandbox.root)
+    await gitIn(['config', 'user.email', 't@e.com'], helper)
+    await gitIn(['config', 'user.name', 'T'], helper)
+    await gitIn(['checkout', '-b', 'listed/branch'], helper)
+    // Date the tip well ahead of main's. The picker sorts by commit date and
+    // the fixture's commits otherwise share a timestamp to the second, which
+    // would leave the order down to git's refname tiebreak.
+    await commitAt(
+      ['commit', '--allow-empty', '-m', 'listed work'],
+      helper,
+      '2030-01-01T00:00:00Z',
+    )
+    await gitIn(['push', '-u', 'origin', 'listed/branch'], helper)
+
+    const result = await runCliWithTty(
+      ['checkout', 'demo'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Enter: confirm' },
+    )
+
+    // The branch was offered in the prompt rather than typed by the user, and
+    // accepting the highlighted entry checked it out. It is the most recent
+    // commit in the repo, so it heads the list.
+    expect(result.stderr).toContain('Which branch?')
+    expect(result.stderr).toContain('listed/branch')
+    expect(result.exitCode).toBe(0)
+
+    const branch = await gitIn(
+      ['rev-parse', '--abbrev-ref', 'HEAD'],
+      result.stdout.trim().replace('__WT_CD__', ''),
+    )
+    expect(branch).toBe('listed/branch')
+  }, 30_000)
+
+  it('marks a branch that is already checked out in the picker', async () => {
+    await runCli(['new', 'demo', '--title', 'taken branch', '--json'], sandbox)
+
+    const result = await runCliWithTty(
+      ['checkout', 'demo'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Enter: confirm' },
+    )
+
+    expect(result.stderr).toContain('test/taken-branch')
+    expect(result.stderr).toContain('already checked out')
+  }, 30_000)
+
+  it('still prompts for a free-text name with --create', async () => {
+    // Nothing to list for a branch that does not exist yet, so --create keeps
+    // the text prompt and its placeholder rather than showing a picker.
+    const result = await runCliWithTty(
+      ['checkout', 'demo', '--create'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'feature/some-branch' },
+    )
+    expect(result.stderr).toContain('feature/some-branch')
+  }, 30_000)
 })
 
 describe('wt list', () => {

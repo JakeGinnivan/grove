@@ -148,6 +148,49 @@ export async function select(
   return guard(await clack.select({ ...PROMPT_STREAM, message, options }))
 }
 
+/**
+ * Like `select`, but with a type-to-filter input in front of the list.
+ *
+ * Repos routinely carry hundreds of branches, which is more than a plain
+ * select can usefully scroll. The filter matches anywhere in the label or
+ * hint, so a partial branch name or a word from the commit subject both
+ * narrow the list.
+ */
+export async function searchSelect(
+  message: string,
+  options: SelectOption[],
+  what = 'A selection',
+  extra: {
+    placeholder?: string
+    initialValue?: string
+    /** Rows visible at once; the rest scroll into view. */
+    maxItems?: number
+  } = {},
+): Promise<string> {
+  if (options.length === 0) {
+    throw new CancelledError('Nothing to select.')
+  }
+  if (!canPrompt()) {
+    throw new NeedsInputError(what, 'the value as an argument')
+  }
+  return guard(
+    await clack.autocomplete({
+      ...PROMPT_STREAM,
+      message,
+      options,
+      maxItems: extra.maxItems ?? 10,
+      ...(extra.placeholder ? { placeholder: extra.placeholder } : {}),
+      ...(extra.initialValue ? { initialValue: extra.initialValue } : {}),
+      filter: (search, option) => {
+        const needle = search.trim().toLowerCase()
+        if (!needle) return true
+        const haystack = `${option.label ?? option.value} ${option.hint ?? ''}`
+        return haystack.toLowerCase().includes(needle)
+      },
+    }),
+  )
+}
+
 export async function multiselect(
   message: string,
   options: SelectOption[],

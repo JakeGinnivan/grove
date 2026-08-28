@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
-import { writeFile, readFile, mkdir, readdir, chmod } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   createSandbox,
@@ -594,14 +594,13 @@ describe('wt cleanup', () => {
       sandbox,
     )
     const path = created.json<{ path: string }>().path
-    const gitPointer = join(path, '.git')
-    // Git for Windows marks this pointer read-only.
-    await chmod(gitPointer, 0o666)
-    await writeFile(gitPointer, 'gitdir: /definitely/missing\n')
 
     const result = await runCli(
       ['cleanup', 'demo', path, '--yes', '--no-trash', '--json'],
       sandbox,
+      // Worktree enumeration does not read the index, but status must reject
+      // a directory where it expects an index file on every supported OS.
+      { GIT_INDEX_FILE: sandbox.root },
     )
     expect(result.exitCode).toBe(1)
     expect(result.json<{ error: { code: string } }>().error.code).toBe('git_failed')

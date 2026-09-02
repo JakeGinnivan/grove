@@ -6,6 +6,6 @@
 # the filtering has to happen somewhere, so it happens once, here.
 steps:
   - label: ':pipeline: upload'
-    command: .buildkite/upload.sh
+    command: .buildkite/steps/upload.sh
     agents:
       queue: linux

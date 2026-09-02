@@ -13,7 +13,7 @@
 # Changes confined to `.buildkite/`, `.github/` or `.vscode/` do not.
 set -euo pipefail
 
-source .buildkite/toolchain.sh
+source .buildkite/steps/toolchain.sh
 
 # Only meaningful on a PR: there is no base to compare against otherwise, and
 # a main build is past the point where adding a changeset would help.
@@ -58,7 +58,7 @@ fi
 # PR would release without reading the changeset files.
 if [[ "$NEEDS_CHANGESET" == "false" ]]; then
   if [[ -s "$PWD/changeset-status.json" ]]; then
-    node .buildkite/annotate-changesets.mjs < changeset-status.json |
+    node .buildkite/steps/annotate-changesets.mjs < changeset-status.json |
       buildkite-agent annotate --style info --context changesets
   else
     echo "No release planned by this PR."

@@ -5,7 +5,7 @@
 # shell, and there is no $GITHUB_PATH equivalent to persist PATH between
 # steps. Activating in the current shell is the whole point.
 #
-#   source .buildkite/toolchain.sh
+#   source .buildkite/steps/toolchain.sh
 set -euo pipefail
 
 # The installer is idempotent, so a warm agent re-running it is cheap. Agents

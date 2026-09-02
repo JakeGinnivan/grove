@@ -2,7 +2,7 @@
 # Typecheck and test on one platform.
 set -euo pipefail
 
-source .buildkite/toolchain.sh
+source .buildkite/steps/toolchain.sh
 
 # `pnpm install` is explicit here: unlike the GitHub Actions pnpm/setup
 # action, nothing installs dependencies for us. --frozen-lockfile is the CI

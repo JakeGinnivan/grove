@@ -7,7 +7,7 @@ steps:
     key: test
     steps:
       - label: 'test ({{matrix}}, node 24)'
-        command: .buildkite/test.sh
+        command: .buildkite/steps/test.sh
         agents:
           queue: '{{matrix}}'
         matrix:
@@ -18,7 +18,7 @@ steps:
   # would otherwise ship silently under the previous version number.
   - label: ':memo: changeset present'
     key: changeset
-    command: .buildkite/changeset-check.sh
+    command: .buildkite/steps/changeset-check.sh
     agents:
       queue: linux
 

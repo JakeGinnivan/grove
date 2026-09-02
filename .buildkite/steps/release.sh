@@ -12,7 +12,7 @@
 # it reports the computed next version for the annotation below.
 set -euo pipefail
 
-source .buildkite/toolchain.sh
+source .buildkite/steps/toolchain.sh
 
 pnpm install --frozen-lockfile
 
@@ -38,7 +38,7 @@ if [[ "$PENDING" -gt 0 ]]; then
   echo "--- Pending changesets; opening version PR"
 
   # Show what this release would be, on the build itself.
-  node .buildkite/annotate-changesets.mjs < changeset-status.json |
+  node .buildkite/steps/annotate-changesets.mjs < changeset-status.json |
     buildkite-agent annotate --style info --context release
 
   pnpm changeset version

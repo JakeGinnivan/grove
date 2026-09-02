@@ -210,10 +210,14 @@ export async function isDirty(dir: string): Promise<boolean> {
 }
 
 export async function upstreamOf(dir: string): Promise<string | undefined> {
-  const { stdout } = await git(
+  const { stdout, exitCode } = await git(
     ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
     { cwd: dir, allowFailure: true },
   )
+  // When the remote branch is gone (deleted on merge, then pruned) git exits
+  // non-zero but still echoes the literal "@{u}" on stdout. Trusting stdout
+  // alone hands that back as if it were a real ref name.
+  if (exitCode !== 0) return undefined
   return stdout || undefined
 }
 
@@ -222,9 +226,13 @@ export async function aheadCount(
   dir: string,
   upstream: string,
 ): Promise<number> {
-  const { stdout } = await git(['rev-list', '--count', `${upstream}..HEAD`], {
-    cwd: dir,
-  })
+  const { stdout, exitCode } = await git(
+    ['rev-list', '--count', `${upstream}..HEAD`],
+    { cwd: dir, allowFailure: true },
+  )
+  // An upstream that no longer resolves is not worth failing the whole
+  // listing over — report the branch as not-ahead and let the caller carry on.
+  if (exitCode !== 0) return 0
   const count = Number.parseInt(stdout, 10)
   if (!Number.isSafeInteger(count) || count < 0) {
     throw new WtError(`git returned an invalid ahead count: ${stdout}`, {

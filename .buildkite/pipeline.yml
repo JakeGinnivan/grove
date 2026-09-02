@@ -1,0 +1,11 @@
+# Entry point Buildkite loads for every build. It only decides *what* to run:
+# the real steps live in ci.yml and release.yml and are uploaded from here.
+#
+# The split exists because a release must not be attempted on a branch build,
+# and Buildkite has no equivalent of GitHub's `on: push: branches: [main]` —
+# the filtering has to happen somewhere, so it happens once, here.
+steps:
+  - label: ':pipeline: upload'
+    command: .buildkite/upload.sh
+    agents:
+      queue: linux

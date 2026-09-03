@@ -291,8 +291,10 @@ export interface BranchInfo {
  * Each branch appears once, under the name a user would type at a `checkout`
  * prompt. A local branch shadows the `<remote>/` ref of the same name because
  * that is what checkout resolves to, regardless of which tip is newer.
- * `<remote>/HEAD` is excluded so the symbolic ref does not surface as a
- * branch called "origin".
+ * `<remote>/HEAD` is skipped so the symbolic ref does not surface as a
+ * branch called "origin". That filtering happens in the loop below rather
+ * than via `for-each-ref --exclude`, which needs git >= 2.42; older git fails
+ * the whole command, and `allowFailure` would turn that into an empty list.
  */
 export async function listBranches(
   gitDir: string,
@@ -308,7 +310,6 @@ export async function listBranches(
       'for-each-ref',
       '--sort=-committerdate',
       `--format=${format}`,
-      `--exclude=refs/remotes/${remote}/HEAD`,
       'refs/heads',
       `refs/remotes/${remote}`,
     ],
@@ -323,7 +324,9 @@ export async function listBranches(
     const [ref = '', relativeDate = '', ...rest] = line.split('\t')
     const isRemote = ref.startsWith(prefix)
     const name = isRemote ? ref.slice(prefix.length) : ref
-    if (!name || name === 'HEAD') continue
+    // `<remote>/HEAD` shortens to bare `<remote>`, so it fails the prefix test
+    // above and would otherwise surface as a local branch named "origin".
+    if (!name || name === 'HEAD' || ref === remote) continue
 
     // Refs arrive newest-first, so the first sighting of a name is the one to
     // keep — unless a local ref turns up later for a name first seen on the

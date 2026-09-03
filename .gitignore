@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .vitest/
 coverage/
+
+# Written by .buildkite/steps/release.sh; never committed.
+changeset-status.json

@@ -20,6 +20,18 @@ pnpm install --frozen-lockfile
 git config user.name "buildkite"
 git config user.email "buildkite@users.noreply.github.com"
 
+# The agent clones with the Buildkite GitHub App, which is read-only: pushing
+# with those credentials fails with "Permission to ... denied to buildkite[bot]".
+# Both pushes below therefore need a token with write access, and `gh` needs
+# the same one. Set GITHUB_TOKEN as a Buildkite secret.
+: "${GITHUB_TOKEN:?GITHUB_TOKEN must be set to push the version PR}"
+
+# BUILDKITE_REPO may be either SSH or HTTPS; take the owner/name from it and
+# push over HTTPS regardless. The URL is passed to each push rather than stored
+# with `git remote set-url`, so the token never lands in .git/config where a
+# later step on a reused agent could read it.
+PUSH_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${BUILDKITE_REPO#*github.com[:/]}"
+
 # On @changesets/cli 2.31.1 this exits 0 and writes the file even when there
 # is nothing to release. That is NOT true on 3.x, where the empty case exits 1
 # and writes no file at all — which under `set -e` would fail the release step
@@ -56,7 +68,10 @@ if [[ "$PENDING" -gt 0 ]]; then
 
   # --force is safe and required here: this branch is machine-owned and is
   # rewritten from scratch on every release build. It is never a shared branch.
-  git push --force origin "$BRANCH"
+  #
+  # 2>/dev/null: a push failure echoes the remote URL, which carries the token.
+  git push --force "$PUSH_URL" "$BRANCH" 2>/dev/null ||
+    { echo "Push of $BRANCH failed (output suppressed: it contains the token)"; exit 1; }
 
   # gh reads GITHUB_TOKEN from the environment; set it as a Buildkite secret.
   if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
@@ -85,5 +100,6 @@ else
 
   # Tags are created locally by `changeset publish`; push them so the GitHub
   # releases and the registry agree.
-  git push --follow-tags origin "HEAD:${BUILDKITE_BRANCH}"
+  git push --follow-tags "$PUSH_URL" "HEAD:${BUILDKITE_BRANCH}" 2>/dev/null ||
+    { echo "Tag push failed (output suppressed: it contains the token)"; exit 1; }
 fi

@@ -1,18 +1,12 @@
 # Typecheck, test, and changeset checks. Uploaded for every build.
 steps:
-  # The CLI drives real git, so it is tested on each platform it runs on.
-  # Ported from the GitHub Actions matrix; windows-latest is dropped because
-  # there is no Windows agent queue.
-  - group: ':test_tube: test'
+  # Linux only: the hosted cluster has no macOS queue. The CLI drives real git,
+  # so platform differences are covered by unit tests rather than a matrix.
+  - label: ':test_tube: test (linux, node 24)'
     key: test
-    steps:
-      - label: 'test ({{matrix}}, node 24)'
-        command: .buildkite/steps/test.sh
-        agents:
-          queue: '{{matrix}}'
-        matrix:
-          - linux
-          - macos
+    command: .buildkite/steps/test.sh
+    agents:
+      queue: default
 
   # Guards the release flow: a behaviour change merged without a changeset
   # would otherwise ship silently under the previous version number.
@@ -20,11 +14,11 @@ steps:
     key: changeset
     command: .buildkite/steps/changeset-check.sh
     agents:
-      queue: linux
+      queue: default
 
-  # A single stable status for a branch protection rule to require. The matrix
-  # step labels encode the platform, so requiring those directly would mean
-  # every matrix change silently renames a required check. This name is fixed.
+  # A single stable status for a branch protection rule to require. Step labels
+  # encode the platform and node version, so requiring those directly would mean
+  # every such change silently renames a required check. This name is fixed.
   #
   # depends_on (not a `wait`) so the dependency is explicit and this step still
   # reports rather than being skipped when an upstream step fails.
@@ -35,4 +29,4 @@ steps:
       - test
       - changeset
     agents:
-      queue: linux
+      queue: default

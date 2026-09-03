@@ -1,12 +1,13 @@
 # Typecheck, test, and changeset checks. Uploaded for every build.
 steps:
-  # Linux only: the hosted cluster has no macOS queue. The CLI drives real git,
-  # so platform differences are covered by unit tests rather than a matrix.
+  # Linux only, by choice: the cluster does have macOS queues, but the CLI is
+  # developed on macOS daily, so a matrix would mostly re-test the covered
+  # platform. Platform differences ride on unit tests and local dev instead.
   - label: ':test_tube: test (linux, node 24)'
     key: test
     command: .buildkite/steps/test.sh
     agents:
-      queue: default
+      queue: linux-small
 
   # Guards the release flow: a behaviour change merged without a changeset
   # would otherwise ship silently under the previous version number.
@@ -14,7 +15,7 @@ steps:
     key: changeset
     command: .buildkite/steps/changeset-check.sh
     agents:
-      queue: default
+      queue: linux-small
 
   # A single stable status for a branch protection rule to require. Step labels
   # encode the platform and node version, so requiring those directly would mean
@@ -29,4 +30,4 @@ steps:
       - test
       - changeset
     agents:
-      queue: default
+      queue: linux-small

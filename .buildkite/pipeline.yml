@@ -8,4 +8,4 @@ steps:
   - label: ':pipeline: upload'
     command: .buildkite/steps/upload.sh
     agents:
-      queue: default
+      queue: linux-small

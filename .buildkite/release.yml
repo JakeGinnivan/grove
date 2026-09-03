@@ -12,4 +12,4 @@ steps:
     concurrency: 1
     concurrency_group: 'grove/release'
     agents:
-      queue: default
+      queue: linux-small

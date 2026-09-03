@@ -1,0 +1,15 @@
+# Uploaded only for builds on the default branch that are not pull requests.
+# See .buildkite/steps/upload.sh for that decision.
+steps:
+  # Never release a commit whose tests have not passed. Buildkite runs steps
+  # concurrently by default, and this pipeline is uploaded alongside ci.yml,
+  # so without an explicit barrier the release could overtake the tests.
+  - wait: ~
+
+  - label: ':rocket: version or publish'
+    command: .buildkite/steps/release.sh
+    # Two releases at once would race on the version PR and the registry.
+    concurrency: 1
+    concurrency_group: 'grove/release'
+    agents:
+      queue: linux-small

@@ -1,0 +1,33 @@
+# Typecheck, test, and changeset checks. Uploaded for every build.
+steps:
+  # Linux only, by choice: the cluster does have macOS queues, but the CLI is
+  # developed on macOS daily, so a matrix would mostly re-test the covered
+  # platform. Platform differences ride on unit tests and local dev instead.
+  - label: ':test_tube: test (linux, node 24)'
+    key: test
+    command: .buildkite/steps/test.sh
+    agents:
+      queue: linux-small
+
+  # Guards the release flow: a behaviour change merged without a changeset
+  # would otherwise ship silently under the previous version number.
+  - label: ':memo: changeset present'
+    key: changeset
+    command: .buildkite/steps/changeset-check.sh
+    agents:
+      queue: linux-small
+
+  # A single stable status for a branch protection rule to require. Step labels
+  # encode the platform and node version, so requiring those directly would mean
+  # every such change silently renames a required check. This name is fixed.
+  #
+  # depends_on (not a `wait`) so the dependency is explicit and this step still
+  # reports rather than being skipped when an upstream step fails.
+  - label: ':white_check_mark: CI'
+    key: ci
+    command: 'echo "All required steps succeeded."'
+    depends_on:
+      - test
+      - changeset
+    agents:
+      queue: linux-small

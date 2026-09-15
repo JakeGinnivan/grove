@@ -23,7 +23,15 @@ git config user.email "buildkite@users.noreply.github.com"
 # The agent clones with the Buildkite GitHub App, which is read-only: pushing
 # with those credentials fails with "Permission to ... denied to buildkite[bot]".
 # Both pushes below therefore need a token with write access, and `gh` needs
-# the same one. Set GITHUB_TOKEN as a Buildkite secret.
+# the same one.
+#
+# The agents are Buildkite-hosted, so cluster secrets are not injected into the
+# environment -- they are fetched explicitly. Allow an already-set GITHUB_TOKEN
+# to win so the script stays runnable outside Buildkite.
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  GITHUB_TOKEN="$(buildkite-agent secret get GITHUB_TOKEN)"
+  export GITHUB_TOKEN
+fi
 : "${GITHUB_TOKEN:?GITHUB_TOKEN must be set to push the version PR}"
 
 # BUILDKITE_REPO may be either SSH or HTTPS; take the owner/name from it and
@@ -89,10 +97,16 @@ else
   # `changeset publish` is a no-op when every version is already on the
   # registry, so a main build with nothing to ship exits cleanly.
   #
-  # Authentication is an NPM_TOKEN classic automation token, unlike the
-  # GitHub Actions release which used npm trusted publishing (OIDC). npm does
-  # not support Buildkite as a trusted publisher, so this is a token, and
-  # packages published this way carry NO provenance attestation.
+  # Authentication is an NPM_TOKEN automation token, unlike the GitHub Actions
+  # release which used npm trusted publishing (OIDC). npm does not support
+  # Buildkite as a trusted publisher, so this is a token, and packages
+  # published this way carry NO provenance attestation.
+  #
+  # Fetched from cluster secrets like GITHUB_TOKEN above; see that comment.
+  if [[ -z "${NPM_TOKEN:-}" ]]; then
+    NPM_TOKEN="$(buildkite-agent secret get NPM_TOKEN)"
+    export NPM_TOKEN
+  fi
   : "${NPM_TOKEN:?NPM_TOKEN must be set for publishing}"
   echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
 

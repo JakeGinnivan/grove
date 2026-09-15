@@ -533,6 +533,41 @@ describe('wt cleanup', () => {
     expect(existsSync(path)).toBe(false)
   })
 
+  it('removes a worktree whose upstream branch was deleted on merge', async () => {
+    // The delete-branch-on-merge flow: push the branch, merge and delete it
+    // upstream, then prune. `branch.<name>.merge` still names the gone ref, so
+    // `rev-parse @{u}` exits non-zero *and* echoes the literal "@{u}" on
+    // stdout. Reading stdout without the exit code hands that back as a ref
+    // name, and `rev-list @{u}..HEAD` then fails the whole command.
+    const created = await runCli(
+      ['new', 'demo', '--title', 'merged upstream', '--json'],
+      sandbox,
+    )
+    const { path, branch } = created.json<{ path: string; branch: string }>()
+    await gitIn(['push', '-u', 'origin', branch], path)
+    await gitIn(['push', 'origin', '--delete', branch], path)
+    await gitIn(['fetch', '--prune'], path)
+
+    // Guard the setup: without a stale upstream config there is no bug to hit.
+    expect(await gitIn(['config', '--get', `branch.${branch}.merge`], path)).toBe(
+      `refs/heads/${branch}`,
+    )
+
+    const listed = await runCli(['list', 'demo', '--json'], sandbox)
+    expect(listed.exitCode).toBe(0)
+    const entry = listed
+      .json<{ worktrees: { path: string; upstream: string | null }[] }>()
+      .worktrees.find((wt) => wt.path === path)
+    expect(entry?.upstream).toBeNull()
+
+    const result = await runCli(
+      ['cleanup', 'demo', path, '--yes', '--no-trash', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    expect(existsSync(path)).toBe(false)
+  })
+
   it('requires --yes before non-interactive removal', async () => {
     const created = await runCli(
       ['new', 'demo', '--title', 'needs consent', '--json'],

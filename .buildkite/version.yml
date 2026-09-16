@@ -1,0 +1,17 @@
+# Uploaded by upload.sh when changesets are pending on the default branch.
+# The name says what this build will do, which a single "version or publish"
+# step could only reveal in its log.
+steps:
+  # Never version a commit whose tests have not passed.
+  #
+  # depends_on, not `wait`: a wait is a barrier against steps already in the
+  # same uploaded pipeline, and this file is uploaded separately from ci.yml,
+  # so a wait here would have nothing above it to wait for.
+  - label: ':memo: version packages'
+    command: .buildkite/steps/version.sh
+    depends_on: ci
+    # Two version runs at once would race on the branch and the PR.
+    concurrency: 1
+    concurrency_group: 'grove/release'
+    agents:
+      queue: linux-small

@@ -388,21 +388,44 @@ pnpm changeset
 ```
 
 Pick the bump and write a sentence for the release notes. Commit the generated
-file with your change; CI fails a PR that touches `src/` without one.
+file with your change.
 
-On merge to `main`, CI opens a **Version Packages** PR that applies the pending
-changesets — bumping the version and folding them into `CHANGELOG.md`. Merging
-that PR publishes to npm. The version PR is the release gate: nothing ships
-until you merge it.
+CI fails a branch that touches the package without one. That is wider than just
+`src/`: changesets counts any tracked file outside a dot-directory, so `docs/`,
+`test/` and this README need one too. Changes confined to `.buildkite/`,
+`.github/` or `.vscode/` do not.
 
-Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/)
-over OIDC, so there is no npm token stored in GitHub — nothing to leak, and
-every release carries a [provenance attestation](https://docs.npmjs.com/generating-provenance-statements/)
-linking it to the commit and workflow run that built it. Verify one with:
+For a change that ships nothing users can observe — a refactor, a test, a docs
+fix — add a changeset with no bump:
 
 ```bash
-npm audit signatures
+pnpm changeset add --empty
 ```
+
+That satisfies the check and adds nothing to the changelog.
+
+On merge to `main`, CI opens a **Version Packages** PR that applies the pending
+changesets — bumping the version and folding them into `CHANGELOG.md`. The
+version PR is the release gate: nothing ships until you merge it.
+
+Merging it **stages** the release on npm rather than publishing it. Staging
+needs no 2FA and so can happen in CI; approving requires 2FA and so happens
+from your machine:
+
+```bash
+npm stage list @jakeginnivan/grove
+npm stage view <stage-id>       # inspect before approving
+npm stage approve <stage-id>    # publishes it
+```
+
+The build annotates the staged version with these commands when it finishes.
+See [`npm help stage`](https://docs.npmjs.com/cli/commands/npm-stage) for the
+full flow.
+
+Releases are published with a token rather than [npm trusted
+publishing](https://docs.npmjs.com/trusted-publishers/) over OIDC: npm does not
+support Buildkite as a trusted publisher. Packages published this way carry no
+provenance attestation, so `npm audit signatures` has nothing to verify.
 
 ## License
 

@@ -1,0 +1,14 @@
+# Uploaded by upload.sh when no changesets are pending on the default branch,
+# which means the version PR has landed and package.json holds the version to
+# ship.
+steps:
+  # Never stage a commit whose tests have not passed. See version.yml for why
+  # this is depends_on rather than a wait.
+  - label: ':rocket: stage to npm'
+    command: .buildkite/steps/publish.sh
+    depends_on: ci
+    # Two stages at once would race on the same version number.
+    concurrency: 1
+    concurrency_group: 'grove/release'
+    agents:
+      queue: linux-small

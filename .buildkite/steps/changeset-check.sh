@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fails a PR that changes a package but adds no changeset.
+# Fails a change that touches the package but adds no changeset.
 #
 # This defers to `changeset status --since`, which is the tool's own built-in
 # check: it exits 1 with "Some packages have been changed but no changesets
@@ -7,18 +7,23 @@
 # against a `^src/` pattern, and it stays correct if the repo ever gains a
 # second package.
 #
-# Scope is wider than the `^src/|^package\.json$` rule this replaces: any
-# tracked file outside a dot-directory counts as a package change, so `docs/`,
-# `test/` and the build config need a changeset (an `--empty` one is fine).
-# Changes confined to `.buildkite/`, `.github/` or `.vscode/` do not.
+# Scope: changesets counts any tracked file outside a dot-directory as a
+# package change, so `docs/`, `test/` and `README.md` need a changeset (an
+# `--empty` one is fine). Changes confined to `.buildkite/`, `.github/` or
+# `.vscode/` do not.
 set -euo pipefail
 
 source .buildkite/steps/toolchain.sh
 
-# Only meaningful on a PR: there is no base to compare against otherwise, and
-# a main build is past the point where adding a changeset would help.
-if [[ "${BUILDKITE_PULL_REQUEST:-false}" == "false" ]]; then
-  echo "Not a pull request; the changeset is checked on the PR."
+# Runs on branch builds as well as PR builds. It used to skip whenever
+# BUILDKITE_PULL_REQUEST was "false", which meant it never ran at all: this
+# pipeline builds branches, those builds report no PR, and so every branch
+# build printed "checked on the PR" and exited 0. The check was decorative.
+#
+# On the default branch there is nothing to compare against and the merge has
+# already happened, so there it really does have nothing to say.
+if [[ "$BUILDKITE_BRANCH" == "$BUILDKITE_PIPELINE_DEFAULT_BRANCH" ]]; then
+  echo "On the default branch; the changeset is checked before merge."
   exit 0
 fi
 
@@ -31,13 +36,23 @@ BASE_BRANCH="${BUILDKITE_PULL_REQUEST_BASE_BRANCH:-$BUILDKITE_PIPELINE_DEFAULT_B
 git fetch --no-tags origin "$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH" || \
   git fetch --no-tags origin "$BASE_BRANCH"
 
+# The "Version Packages" commit deletes every changeset, so the gate below
+# would find none and fail the release PR permanently. Exempt it by what it
+# contains, never by its branch name: a branch build carries no PR metadata,
+# so a name match would be an authorization check made of a string anyone can
+# choose. See is-version-pr.sh.
+if .buildkite/steps/is-version-pr.sh "origin/$BASE_BRANCH"; then
+  echo "This is a version bump; no changeset expected."
+  exit 0
+fi
+
 # Note: --since only sees *committed* changesets, which is what we want — an
-# uncommitted file could not have reached the PR anyway.
+# uncommitted file could not have reached the branch anyway.
 #
 # The exit code alone is not a safe signal. On @changesets/cli 2.31.1 the
 # "nothing to release" case exits 0, but on 3.x it exits 1 — the same code as
 # the genuine "package changed with no changeset" failure. Distinguishing them
-# by exit code would fail a docs-only PR on 3.x.
+# by exit code would fail a docs-only change on 3.x.
 #
 # So: capture the output and decide from it. A missing/empty file means the
 # command bailed, and the log tells us which of the two cases it was.
@@ -55,28 +70,29 @@ else
 fi
 
 # Surface the planned bump in the build UI, so the reviewer can see what this
-# PR would release without reading the changeset files.
+# change would release without reading the changeset files.
 if [[ "$NEEDS_CHANGESET" == "false" ]]; then
   if [[ -s "$PWD/changeset-status.json" ]]; then
     node .buildkite/steps/annotate-changesets.mjs < changeset-status.json |
       buildkite-agent annotate --style info --context changesets
   else
-    echo "No release planned by this PR."
+    echo "No release planned by this change."
   fi
 else
   buildkite-agent annotate --style error --context changesets <<'EOF'
 **No changeset found.**
 
-This PR changes the package but adds no changeset, so it would ship silently
-under the previous version number.
+This change touches the package but adds no changeset, so it would ship
+silently under the previous version number.
 
 - **User-visible change?** Run `pnpm changeset` and commit the result.
 - **Docs, tests, or a refactor that ships nothing?** Run
-  `pnpm changeset add --empty` and commit that.
+  `pnpm changeset add --empty` and commit that. An empty changeset satisfies
+  this check and adds nothing to the changelog.
 
 Note this is broader than a `src/`-only rule: changesets counts any tracked
-file outside a dot-directory, so `docs/`, `test/` and the build config all
-need one. Changes confined to `.buildkite/`, `.github/` or `.vscode/` do not.
+file outside a dot-directory, so `docs/`, `test/` and `README.md` all need
+one. Changes confined to `.buildkite/`, `.github/` or `.vscode/` do not.
 EOF
   exit 1
 fi

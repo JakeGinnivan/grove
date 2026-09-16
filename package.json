@@ -1,6 +1,6 @@
 {
   "name": "@jakeginnivan/grove",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Git worktree manager with profiles, shell integration, and agent-friendly non-interactive commands",
   "keywords": [
     "git",

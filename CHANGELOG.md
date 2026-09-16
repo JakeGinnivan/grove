@@ -1,5 +1,12 @@
 # @jakeginnivan/grove
 
+## 0.3.2
+
+### Patch Changes
+
+- 2c8fe78: Release pipeline now stages to npm for approval instead of publishing directly,
+  and the build names which half of the release it is running before it starts.
+
 ## 0.3.1
 
 ### Patch Changes

@@ -410,7 +410,9 @@ version PR is the release gate: nothing ships until you merge it.
 
 Merging it **stages** the release on npm rather than publishing it. Staging
 needs no 2FA and so can happen in CI; approving requires 2FA and so happens
-from your machine:
+from you — either on
+[npm](https://www.npmjs.com/settings/jakeginnivan/staged-packages) or from your
+machine:
 
 ```bash
 npm stage list @jakeginnivan/grove

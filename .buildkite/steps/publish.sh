@@ -68,10 +68,19 @@ git push --follow-tags "$PUSH_URL" "HEAD:${BUILDKITE_BRANCH}" 2>/dev/null ||
 # Surface the approval step on the build itself. The stage id is in the log
 # above; `npm stage list` is the reliable way to get it, so the annotation
 # gives both rather than a parsed id that could silently come out empty.
+#
+# The web URL is account-scoped, not package-scoped, so it is written out
+# rather than derived from $NAME: the scope in @jakeginnivan/grove matches the
+# username here by coincidence, and deriving it would break quietly on a
+# package published under any other scope.
+STAGED_PACKAGES_URL="https://www.npmjs.com/settings/jakeginnivan/staged-packages"
+
 {
   echo "**\`${NAME}@${VERSION}\` is staged, not published.**"
   echo
-  echo "Approving requires 2FA, so it has to happen from your machine:"
+  echo "Approve it on npm: [staged packages](${STAGED_PACKAGES_URL})"
+  echo
+  echo "Or from your machine — approving requires 2FA either way:"
   echo
   echo '```'
   echo "npm stage list ${NAME}"

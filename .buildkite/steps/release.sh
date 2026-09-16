@@ -38,7 +38,12 @@ fi
 # push over HTTPS regardless. The URL is passed to each push rather than stored
 # with `git remote set-url`, so the token never lands in .git/config where a
 # later step on a reused agent could read it.
-PUSH_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${BUILDKITE_REPO#*github.com[:/]}"
+#
+# REPO is the bare owner/name. The trailing `.git` has to go: it is harmless in
+# a push URL but would make the API paths below 404.
+REPO="${BUILDKITE_REPO#*github.com[:/]}"
+REPO="${REPO%.git}"
+PUSH_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}"
 
 # On @changesets/cli 2.31.1 this exits 0 and writes the file even when there
 # is nothing to release. That is NOT true on 3.x, where the empty case exits 1
@@ -81,15 +86,37 @@ if [[ "$PENDING" -gt 0 ]]; then
   git push --force "$PUSH_URL" "$BRANCH" 2>/dev/null ||
     { echo "Push of $BRANCH failed (output suppressed: it contains the token)"; exit 1; }
 
-  # gh reads GITHUB_TOKEN from the environment; set it as a Buildkite secret.
-  if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+  # `gh` is not installed on the Buildkite hosted agent image, so the two calls
+  # it made -- does an open PR exist for this branch, and if not open one -- go
+  # through the REST API with curl, which is present.
+  #
+  # -f makes curl exit non-zero on an HTTP error, which `set -e` then catches;
+  # without it a 401 or 422 would be parsed as if it were a PR list.
+  api() {
+    curl -fsS \
+      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "$@"
+  }
+
+  # The head filter needs the owner prefix, and REPO is already owner/name.
+  OPEN_PRS="$(api "https://api.github.com/repos/${REPO}/pulls?state=open&head=${REPO%%/*}:${BRANCH}" |
+    node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).length))')"
+
+  if [[ "$OPEN_PRS" -gt 0 ]]; then
     echo "Version PR already open; the force-push updated it."
   else
-    gh pr create \
-      --base "$BUILDKITE_BRANCH" \
-      --head "$BRANCH" \
-      --title "chore: version packages" \
-      --body "Automated version bump from changesets. Merging this publishes to npm."
+    # node builds the JSON so the title and body are escaped properly rather
+    # than interpolated into a string that a quote in a changeset could break.
+    api -X POST "https://api.github.com/repos/${REPO}/pulls" \
+      -d "$(node -e 'console.log(JSON.stringify({
+        title: "chore: version packages",
+        head: process.argv[1],
+        base: process.argv[2],
+        body: "Automated version bump from changesets. Merging this publishes to npm.",
+      }))' "$BRANCH" "$BUILDKITE_BRANCH")" >/dev/null
+    echo "Opened version PR for $BRANCH."
   fi
 else
   echo "--- No pending changesets; publishing"

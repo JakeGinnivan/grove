@@ -40,16 +40,33 @@ fi
 
 pnpm build
 
-# Tee rather than capture: the stage id is in this output, and if the format
-# is not what we expect the log still shows exactly what npm said.
-STAGE_LOG="$PWD/npm-stage.log"
-npm stage publish 2>&1 | tee "$STAGE_LOG"
+# --json so the stage id can be read from a field rather than scraped out of
+# "+ pkg@1.2.3 (staged with id ...)". npm only sets stageId when the registry
+# returns one, so it can legitimately be absent.
+#
+# Tee rather than capture: if the output is not the JSON we expect, the log
+# still shows exactly what npm said.
+STAGE_LOG="$PWD/npm-stage.json"
+npm stage publish --json 2>&1 | tee "$STAGE_LOG"
 
 # `npm stage publish` pipes through tee, so check its status, not tee's.
 if [[ "${PIPESTATUS[0]}" -ne 0 ]]; then
   echo "npm stage publish failed."
   exit 1
 fi
+
+# Tolerate both a missing field and unparseable output: the id only decorates
+# the instructions below, and losing it must not fail a release that npm has
+# already accepted.
+STAGE_ID="$(node -e '
+  const fs = require("node:fs")
+  try {
+    const out = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    process.stdout.write(out.stageId ?? "")
+  } catch {
+    process.stdout.write("")
+  }
+' "$STAGE_LOG")"
 
 # Tag at stage time, as the released version is fixed by package.json whether
 # or not the stage is later approved. A rejected stage leaves a tag pointing
@@ -65,18 +82,27 @@ fi
 git push --follow-tags "$PUSH_URL" "HEAD:${BUILDKITE_BRANCH}" 2>/dev/null ||
   { echo "Tag push failed (output suppressed: it contains the token)"; exit 1; }
 
-# Surface the approval step on the build itself. The stage id is in the log
-# above; `npm stage list` is the reliable way to get it, so the annotation
-# gives both rather than a parsed id that could silently come out empty.
+# The release carries the changelog and the approval instructions, so merging
+# the version PR produces a notification with everything needed to finish the
+# release. It is created after the tag push, as a release needs its tag.
+.buildkite/steps/create-release.sh "$TAG" "$VERSION" "$STAGE_ID"
+
+# Surface the approval step on the build itself too, for whoever is already
+# looking at the build rather than at their inbox.
 {
   echo "**\`${NAME}@${VERSION}\` is staged, not published.**"
   echo
   echo "Approving requires 2FA, so it has to happen from your machine:"
   echo
   echo '```'
-  echo "npm stage list ${NAME}"
-  echo "npm stage view <stage-id>       # inspect before approving"
-  echo "npm stage approve <stage-id>    # publishes it"
+  if [[ -n "$STAGE_ID" ]]; then
+    echo "npm stage view ${STAGE_ID}       # inspect before approving"
+    echo "npm stage approve ${STAGE_ID}    # publishes it"
+  else
+    echo "npm stage list ${NAME}"
+    echo "npm stage view <stage-id>       # inspect before approving"
+    echo "npm stage approve <stage-id>    # publishes it"
+  fi
   echo '```'
   echo
   echo "\`npm stage publish\` said:"

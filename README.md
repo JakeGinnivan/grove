@@ -72,8 +72,44 @@ Examples use `wt` (the shortcut); `grove` works identically everywhere.
 wt clone git@github.com:owner/my-service.git
 ```
 
-Clones into `<code-dir>/my-service/main` and registers it. Existing clones can
-be adopted with `wt repos add <path>`.
+Clones into `<code-dir>/my-service/main` and registers it.
+
+### Adopt an existing local repo
+
+```bash
+wt import ~/src/my-service
+```
+
+Grove keeps the primary checkout in `<repo>/main` so sibling directories can be
+worktrees. When the repo is a plain clone instead, `import` says so and offers
+to move it into a `main/` subfolder, in place — the repo's own path does not
+change, so anything pointing at the folder still resolves:
+
+```
+~/src/my-service/        →   ~/src/my-service/main/
+```
+
+Pass `--restructure` or `--no-restructure` to decide without being asked
+(required under `--json`, since the move touches files). A repo with linked
+worktrees is refused rather than broken, and `-p <profile>` / `--dir <path>`
+additionally move the repo under a profile directory.
+
+To register a repo without touching its layout at all, use
+`wt repos add <path>`.
+
+### Start a new repo
+
+```bash
+wt create my-tool
+```
+
+Creates `<code-dir>/my-tool/main`, runs `git init` on branch `main`, and
+registers it. The repo has no commits yet, so make the first one before asking
+for a worktree — and since there is no remote to infer a base from, name it:
+
+```bash
+wt new my-tool "my task" --base main
+```
 
 ### Start work on something
 
@@ -283,6 +319,8 @@ implies `--no-interactive`:
 grove repos --json
 grove list my-service --json
 grove new my-service --title "fix login" --json
+grove import ~/src/my-service --restructure --json
+grove create my-tool --json
 grove checkout my-service some-branch --json
 grove sync my-service --json
 grove profile list --json
@@ -308,7 +346,8 @@ prompt:
 `error.code` is stable and safe to branch on. Notable codes: `needs_input`,
 `unknown_repo`, `unknown_profile`, `branch_exists`, `branch_in_use`,
 `branch_not_found`, `worktree_exists`, `unknown_stack_parent`,
-`no_matching_worktree`, `ambiguous_worktree`, `alias_conflicts_with_repo`.
+`no_matching_worktree`, `ambiguous_worktree`, `alias_conflicts_with_repo`,
+`not_a_repo`, `not_repo_root`, `has_linked_worktrees`, `create_target_exists`.
 
 Prompts are also skipped automatically when stdin is not a TTY.
 

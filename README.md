@@ -94,8 +94,11 @@ Pass `--restructure` or `--no-restructure` to decide without being asked
 worktrees is refused rather than broken, and `-p <profile>` / `--dir <path>`
 additionally move the repo under a profile directory.
 
-To register a repo without touching its layout at all, use
-`wt repos add <path>`.
+To register a repo without touching its layout at all, pass
+`--no-restructure`.
+
+> `wt repos add` is deprecated: it now forwards to `wt import
+> --no-restructure` and prints a warning. It will be removed in v1.
 
 ### Start a new repo
 
@@ -104,8 +107,26 @@ wt create my-tool
 ```
 
 Creates `<code-dir>/my-tool/main`, runs `git init` on branch `main`, and
-registers it. The repo has no commits yet, so make the first one before asking
-for a worktree — and since there is no remote to infer a base from, name it:
+registers it.
+
+When the [GitHub CLI](https://cli.github.com) is installed and logged in, it
+then offers to create the repo on GitHub too (defaulting to no, then asking
+for visibility) and wires it up as `origin`:
+
+```
+◆  Create "my-tool" on GitHub too?
+│  ○ Yes / ● No
+```
+
+`--github` skips straight to creating it (private unless `--visibility` says
+otherwise), `--no-github` skips the question, and `--owner` creates it under
+an org. Nothing is pushed — a fresh repo has no commits yet. If the GitHub
+step fails, the local repo is still created and registered.
+
+Set `GROVE_NO_GITHUB=1` to stop grove shelling out to `gh` at all.
+
+The repo has no commits yet, so make the first one before asking for a
+worktree. Without a remote there is also no base to infer, so name it:
 
 ```bash
 wt new my-tool "my task" --base main
@@ -321,6 +342,7 @@ grove list my-service --json
 grove new my-service --title "fix login" --json
 grove import ~/src/my-service --restructure --json
 grove create my-tool --json
+grove create my-tool --github --visibility public --json
 grove checkout my-service some-branch --json
 grove sync my-service --json
 grove profile list --json
@@ -347,7 +369,8 @@ prompt:
 `unknown_repo`, `unknown_profile`, `branch_exists`, `branch_in_use`,
 `branch_not_found`, `worktree_exists`, `unknown_stack_parent`,
 `no_matching_worktree`, `ambiguous_worktree`, `alias_conflicts_with_repo`,
-`not_a_repo`, `not_repo_root`, `has_linked_worktrees`, `create_target_exists`.
+`not_a_repo`, `not_repo_root`, `has_linked_worktrees`, `create_target_exists`,
+`gh_unavailable`, `gh_create_failed`, `invalid_visibility`.
 
 Prompts are also skipped automatically when stdin is not a TTY.
 

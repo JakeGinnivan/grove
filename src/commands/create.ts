@@ -18,9 +18,17 @@ import {
   writeRepo,
 } from '../core/registry.js'
 import { git } from '../core/git.js'
-import { optionalText, select, canPrompt } from '../core/prompts.js'
+import { optionalText, select, confirm, canPrompt } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, info, getOutputContext } from '../core/output.js'
 import { WtError, NeedsInputError } from '../core/errors.js'
+import {
+  ghStatus,
+  createGithubRepo,
+  isVisibility,
+  VISIBILITIES,
+  type Visibility,
+  type CreatedRepo,
+} from '../core/github.js'
 
 export function createCommand(): Command {
   return new Command('create')
@@ -31,6 +39,13 @@ export function createCommand(): Command {
     .option('--no-alias', 'skip the alias prompt')
     .option('--dir <path>', 'explicit parent directory, overriding the profile')
     .option('-b, --branch <name>', 'initial branch name (default: main)')
+    .option('--github', 'also create the repo on GitHub and wire up origin')
+    .option('--no-github', 'skip the GitHub prompt')
+    .option(
+      '--visibility <level>',
+      `GitHub visibility: ${VISIBILITIES.join(', ')} (default: private)`,
+    )
+    .option('--owner <owner>', 'GitHub user or org to create the repo under')
     .action(async (name, options) => {
       await runCreate(name, options)
     })
@@ -41,6 +56,9 @@ interface CreateOptions {
   alias?: string | false
   dir?: string
   branch?: string
+  github?: boolean
+  visibility?: string
+  owner?: string
 }
 
 /**
@@ -133,6 +151,8 @@ async function runCreate(name: string, options: CreateOptions): Promise<void> {
 
   await writeRepo(config.reposFile, name, repoParent, alias)
 
+  const github = await maybeCreateOnGithub(name, mainPath, options)
+
   if (getOutputContext().json) {
     emitJson({
       ok: true,
@@ -142,6 +162,9 @@ async function runCreate(name: string, options: CreateOptions): Promise<void> {
       path: repoParent,
       mainPath,
       branch,
+      github: github
+        ? { nameWithOwner: github.nameWithOwner, url: github.url }
+        : null,
     })
     return
   }
@@ -160,10 +183,104 @@ async function runCreate(name: string, options: CreateOptions): Promise<void> {
     ),
   )
   log(pc.dim(`  Branch: ${branch} (no commits yet)`))
-  // Worktrees branch from a ref, and a repo with no commits and no remote has
-  // none to offer — so both steps are spelled out, including the --base that
-  // stands in for the origin/HEAD `new` would otherwise look for.
+  if (github) {
+    log(pc.dim(`  GitHub: ${github.url} (origin)`))
+  }
+  // Worktrees branch from a ref, and a repo with no commits has none to offer
+  // — so the first commit is always step one. Without a remote, `new` also has
+  // no origin/HEAD to infer a base from, so that gets spelled out too.
   log(pc.dim(`  Next: make your first commit in ${mainPath}`))
-  log(pc.dim(`        then: wt new ${alias ?? name} "my task" --base ${branch}`))
+  if (github) {
+    log(pc.dim(`        then: git push -u origin ${branch}`))
+    log(pc.dim(`        then: wt new ${alias ?? name} "my task"`))
+  } else {
+    log(pc.dim(`        then: wt new ${alias ?? name} "my task" --base ${branch}`))
+  }
   emitCd(mainPath)
+}
+
+/**
+ * Offer to create the repo on GitHub, when `gh` can actually do it.
+ *
+ * Failure here is deliberately not fatal: the local repo is already created
+ * and registered by this point, and losing that over a network error would be
+ * a worse outcome than an unwired remote the user can add later.
+ */
+async function maybeCreateOnGithub(
+  name: string,
+  mainPath: string,
+  options: CreateOptions,
+): Promise<CreatedRepo | undefined> {
+  if (options.github === false) return undefined
+
+  // Validate before touching gh, so a typo'd flag is not reported as a gh
+  // problem — and before the prompt, so it fails fast rather than after asking.
+  const requestedVisibility =
+    options.visibility === undefined ? undefined : parseVisibility(options.visibility)
+
+  const explicit = options.github === true
+  const status = await ghStatus()
+  if (!status.available) {
+    // Only worth mentioning when they asked for it; otherwise absent `gh` just
+    // means the prompt never appears.
+    if (explicit) {
+      throw new WtError(`Cannot create a GitHub repo: ${status.reason}.`, {
+        code: 'gh_unavailable',
+        hint: `The local repo at ${mainPath} was created and registered.`,
+      })
+    }
+    return undefined
+  }
+
+  if (!explicit) {
+    if (!canPrompt()) return undefined
+    const wants = await confirm(`Create "${name}" on GitHub too?`, {
+      assumeYes: false,
+      defaultValue: false,
+      what: 'A GitHub decision',
+    })
+    if (!wants) return undefined
+  }
+
+  const visibility = await chooseVisibility(requestedVisibility, explicit)
+
+  info(`Creating ${name} on GitHub (${visibility})...`)
+  return createGithubRepo({
+    name,
+    source: mainPath,
+    visibility,
+    ...(options.owner ? { owner: options.owner } : {}),
+  })
+}
+
+function parseVisibility(value: string): Visibility {
+  if (!isVisibility(value)) {
+    throw new WtError(`Invalid visibility: ${value}`, {
+      code: 'invalid_visibility',
+      hint: `Use one of: ${VISIBILITIES.join(', ')}.`,
+    })
+  }
+  return value
+}
+
+/** Visibility for a new GitHub repo, defaulting to the safe option. */
+async function chooseVisibility(
+  requested: Visibility | undefined,
+  explicit: boolean,
+): Promise<Visibility> {
+  if (requested !== undefined) return requested
+  // --github on its own should not stop to ask; private is the safe default
+  // for a repo whose contents nobody has reviewed yet.
+  if (explicit || !canPrompt()) return 'private'
+
+  const chosen = await select(
+    'Visibility?',
+    [
+      { value: 'private', label: 'Private' },
+      { value: 'public', label: 'Public' },
+      { value: 'internal', label: 'Internal', hint: 'org-visible' },
+    ],
+    'A visibility',
+  )
+  return isVisibility(chosen) ? chosen : 'private'
 }

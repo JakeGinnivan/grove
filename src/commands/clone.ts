@@ -112,7 +112,7 @@ async function runClone(
   if (existsSync(cloneTarget)) {
     throw new WtError(`Already exists: ${cloneTarget}`, {
       code: 'clone_target_exists',
-      hint: `Register it instead with \`grove repos add ${repoParent}\`.`,
+      hint: `Register it instead with \`grove import ${repoParent}\`.`,
     })
   }
 

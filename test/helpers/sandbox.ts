@@ -174,6 +174,10 @@ export async function runCli(
     GIT_AUTHOR_EMAIL: 'test@example.com',
     GIT_COMMITTER_NAME: 'Test',
     GIT_COMMITTER_EMAIL: 'test@example.com',
+    // Never let a test reach the real GitHub CLI: whether it is installed and
+    // logged in varies per machine, which would make results ambient. Tests
+    // that exercise the integration put a fake gh on PATH and unset this.
+    GROVE_NO_GITHUB: '1',
     ...extraEnv,
   }
 

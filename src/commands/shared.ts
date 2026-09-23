@@ -19,7 +19,7 @@ export async function pickRepo(
   if (canonical.length === 0) {
     throw new WtError('No repos registered.', {
       code: 'no_repos',
-      hint: 'Use `wt clone <url>` or `wt register <path>` first.',
+      hint: 'Use `wt clone <url>` or `wt import <path>` first.',
     })
   }
   if (canonical.length === 1) return canonical[0]!.name

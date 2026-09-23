@@ -81,7 +81,7 @@ export async function resolveRepo(
     code: 'unknown_repo',
     hint: available.length
       ? `Available: ${available.join(', ')}`
-      : 'No repos registered yet. Use `wt clone <url>` or `wt repos add <path>`.',
+      : 'No repos registered yet. Use `wt clone <url>` or `wt import <path>`.',
   })
 }
 

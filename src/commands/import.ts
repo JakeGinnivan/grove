@@ -20,7 +20,13 @@ import {
 } from '../core/registry.js'
 import { git, isGitRepo, listWorktrees } from '../core/git.js'
 import { canonical, samePath } from '../core/paths.js'
-import { optionalText, select, confirm, canPrompt } from '../core/prompts.js'
+import { optionalText, select, confirm, requireText, canPrompt } from '../core/prompts.js'
+import {
+  configureBasePort,
+  generatePortFiles,
+  portsForWorktree,
+  readPortLayout,
+} from '../core/ports.js'
 import { emitJson, emitCd, log, success, info, warn, getOutputContext } from '../core/output.js'
 import { WtError, NeedsInputError } from '../core/errors.js'
 
@@ -38,16 +44,24 @@ export function importCommand(): Command {
       'move the repo under this profile\'s directory before registering',
     )
     .option('--dir <path>', 'explicit parent directory to move the repo into')
+    .option('--base-port <port>', 'local start port for this repo')
     .action(async (path, nameArg, options) => {
       await runImport(path, nameArg, options)
     })
 }
 
-interface ImportOptions {
+export interface ImportOptions {
   alias?: string | false
   restructure?: boolean
   profile?: string
   dir?: string
+  basePort?: string
+  /**
+   * Set by the deprecated `repos add` shim. Human output already carries the
+   * warning, but --json suppresses that, so it rides along in the payload
+   * where a script can actually see it.
+   */
+  deprecationNotice?: string
 }
 
 /** What we found at the path the user pointed us at. */
@@ -174,7 +188,7 @@ async function chooseTargetProfile(
   )
 }
 
-async function runImport(
+export async function runImport(
   pathArg: string,
   nameArg: string | undefined,
   options: ImportOptions,
@@ -200,12 +214,17 @@ async function runImport(
 
   // 1. Warn about — and offer to fix — a repo that is not in <repo>/main.
   if (layout.kind === 'plain-clone') {
-    warn(`${path} is a plain clone, not a ${pc.cyan('<repo>/main')} worktree layout.`)
-    log(
-      pc.dim(
-        `  Grove keeps the primary checkout in main/ so sibling directories can be worktrees.`,
-      ),
-    )
+    // Only worth raising when it is still an open question: `--no-restructure`
+    // has already settled it, and flagging a layout we are not going to touch
+    // is noise.
+    if (options.restructure !== false) {
+      warn(`${path} is a plain clone, not a ${pc.cyan('<repo>/main')} worktree layout.`)
+      log(
+        pc.dim(
+          `  Grove keeps the primary checkout in main/ so sibling directories can be worktrees.`,
+        ),
+      )
+    }
 
     const shouldRestructure = await decideRestructure(options.restructure, repoName)
     if (shouldRestructure) {
@@ -263,6 +282,32 @@ async function runImport(
 
   await writeRepo(config.reposFile, repoName, repoParent, alias)
 
+  // Repos declaring a port layout need a base port before their local config
+  // can be generated; same flow as clone.
+  const portLayout = await readPortLayout(mainPath)
+  const basePortInput =
+    options.basePort ??
+    (portLayout && canPrompt()
+      ? await requireText(undefined, {
+          message: `Base port for ${repoName}`,
+          flag: '--base-port',
+          what: 'A base port',
+          placeholder: '3800',
+        })
+      : undefined)
+  const basePort = basePortInput
+    ? await configureBasePort(mainPath, config.reposFile, basePortInput)
+    : null
+  if (portLayout && basePort !== null) {
+    const { layout, assignment } = await portsForWorktree(mainPath, mainPath)
+    await generatePortFiles(mainPath, layout, assignment)
+  }
+  const portWarning =
+    portLayout && basePort === null
+      ? 'Port layout found, but no base port was set. Run grove port configure --base-port <port>.'
+      : null
+  if (portWarning) warn(portWarning)
+
   // Base-branch detection reads origin/HEAD; set it now while we are here so
   // the first `grove new` does not have to fail first.
   await git(['remote', 'set-head', 'origin', '--auto'], {
@@ -280,6 +325,11 @@ async function runImport(
       mainPath,
       restructured,
       moved,
+      basePort,
+      portWarning,
+      ...(options.deprecationNotice
+        ? { deprecated: options.deprecationNotice }
+        : {}),
     })
     return
   }

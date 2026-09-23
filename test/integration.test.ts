@@ -1055,16 +1055,60 @@ describe('grove profile', () => {
   })
 })
 
+describe('wt repos add (deprecated)', () => {
+  it('forwards to import, warns, and leaves the layout alone', async () => {
+    const path = join(sandbox.root, 'legacy')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['repos', 'add', path, '--name', 'legacy', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{
+      name: string
+      mainPath: string
+      restructured: boolean
+      deprecated: string
+    }>()
+    expect(data.name).toBe('legacy')
+    // The old command never restructured, and the shim keeps that behaviour.
+    expect(data.restructured).toBe(false)
+    expect(existsSync(join(path, '.git'))).toBe(true)
+    // --json swallows the stderr warning, so the notice rides in the payload.
+    expect(data.deprecated).toContain('grove import')
+
+    const repos = await runCli(['repos', '--json'], sandbox)
+    const names = repos.json<{ repos: { name: string }[] }>().repos.map((r) => r.name)
+    expect(names).toContain('legacy')
+  })
+
+  it('warns on stderr in human mode', async () => {
+    const path = join(sandbox.root, 'legacy2')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(['repos', 'add', path, '--name', 'legacy2'], sandbox)
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toContain('deprecated')
+    expect(result.stderr).toContain('grove import')
+  })
+
+  it('stays hidden from the repos help output', async () => {
+    const result = await runCli(['repos', '--help'], sandbox)
+    expect(result.stdout).not.toContain('add')
+  })
+})
+
 describe('registry aliases', () => {
   it('refuses an alias that collides with an existing repo name', async () => {
     // Names and aliases share one namespace, so accepting this would delete
     // the existing repo's registration.
     const other = join(sandbox.root, 'code', 'other')
     await mkdir(other, { recursive: true })
-    await runCli(['repos', 'add', sandbox.repoPath, '--name', 'keepme', '--json'], sandbox)
+    await runCli(['import', sandbox.repoPath, 'keepme', '--no-alias', '--json'], sandbox)
 
     const result = await runCli(
-      ['repos', 'add', sandbox.repoPath, '--name', 'newrepo', '--alias', 'keepme', '--json'],
+      ['import', sandbox.repoPath, 'newrepo', '--alias', 'keepme', '--json'],
       sandbox,
     )
     expect(result.exitCode).toBe(1)
@@ -1657,5 +1701,150 @@ describe('wt create', () => {
     const data = result.json<{ path: string; branch: string }>()
     expect(data.branch).toBe('test/first-task')
     expect(existsSync(data.path)).toBe(true)
+  })
+})
+
+describe('wt create --github', () => {
+  /**
+   * A stand-in for the GitHub CLI. Tests must never touch the network, so the
+   * real `gh` is shadowed by a script on PATH that records its arguments and
+   * reports whatever auth state the test needs.
+   */
+  async function fakeGh(
+    authOutput: string,
+    { exitCode = 0 }: { exitCode?: number } = {},
+  ): Promise<{ binDir: string; logFile: string }> {
+    const binDir = join(sandbox.root, 'fakebin')
+    const logFile = join(sandbox.root, 'gh-calls.log')
+    await mkdir(binDir, { recursive: true })
+    const script = [
+      '#!/bin/sh',
+      'if [ "$1" = "auth" ]; then',
+      `cat <<'AUTH'`,
+      authOutput,
+      'AUTH',
+      `exit ${exitCode}`,
+      'fi',
+      'if [ "$1" = "repo" ] && [ "$2" = "create" ]; then',
+      `  echo "$@" >> "${logFile}"`,
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "repo" ] && [ "$2" = "view" ]; then',
+      `  echo '{"nameWithOwner":"me/thing","url":"https://github.com/me/thing"}'`,
+      '  exit 0',
+      'fi',
+      'exit 1',
+    ].join('\n')
+    await writeFile(join(binDir, 'gh'), `${script}\n`, { mode: 0o755 })
+    return { binDir, logFile }
+  }
+
+  const LOGGED_IN = 'github.com\n  - Active account: true'
+  const BAD_TOKEN =
+    'github.com\n  X Failed to log in to github.com account me (keyring)\n  - The token in keyring is invalid.'
+
+  it('creates the repo on GitHub and reports it', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+
+    const result = await runCli(
+      ['create', 'thing', '--github', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{
+      mainPath: string
+      github: { nameWithOwner: string; url: string } | null
+    }>()
+    expect(data.github).toEqual({
+      nameWithOwner: 'me/thing',
+      url: 'https://github.com/me/thing',
+    })
+
+    // Private by default, wired as origin, pointed at the main checkout.
+    const call = await readFile(logFile, 'utf8')
+    expect(call).toContain('--private')
+    expect(call).toContain('--remote origin')
+    expect(call).toContain(data.mainPath)
+    // Nothing is pushed: a fresh repo has no commits to push.
+    expect(call).not.toContain('--push')
+  })
+
+  it('passes an explicit visibility through', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    await runCli(
+      ['create', 'pubthing', '--github', '--visibility', 'public', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(await readFile(logFile, 'utf8')).toContain('--public')
+  })
+
+  it('rejects an unknown visibility before calling gh', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    const result = await runCli(
+      ['create', 'badvis', '--github', '--visibility', 'hush', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(1)
+    expect(result.json<{ error: { code: string } }>().error.code).toBe(
+      'invalid_visibility',
+    )
+    expect(existsSync(logFile)).toBe(false)
+  })
+
+  it('treats an invalid gh token as unavailable, keeping the local repo', async () => {
+    const { binDir } = await fakeGh(BAD_TOKEN)
+    const result = await runCli(
+      ['create', 'tok', '--github', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(1)
+    const error = result.json<{ error: { code: string; message: string } }>().error
+    expect(error.code).toBe('gh_unavailable')
+    expect(error.message).toContain('invalid or expired')
+
+    // gh failing must not cost the user the local repo.
+    expect(existsSync(join(sandbox.root, 'code', 'tok', 'main', '.git'))).toBe(true)
+    const repos = await runCli(['repos', '--json'], sandbox)
+    const names = repos.json<{ repos: { name: string }[] }>().repos.map((r) => r.name)
+    expect(names).toContain('tok')
+  })
+
+  it('stays silent about GitHub when gh is unusable and none was asked for', async () => {
+    const { binDir } = await fakeGh(BAD_TOKEN)
+    const result = await runCli(
+      ['create', 'quiet', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.json<{ github: unknown }>().github).toBeNull()
+  })
+
+  it('never calls gh with --no-github', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    const result = await runCli(
+      ['create', 'local', '--no-github', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.json<{ github: unknown }>().github).toBeNull()
+    expect(existsSync(logFile)).toBe(false)
+  })
+
+  it('does not prompt for GitHub in non-interactive mode', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    // --json implies non-interactive: a prompt here would hang the run.
+    const result = await runCli(
+      ['create', 'unattended', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.json<{ github: unknown }>().github).toBeNull()
+    expect(existsSync(logFile)).toBe(false)
   })
 })

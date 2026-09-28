@@ -284,7 +284,13 @@ export async function runImport(
 
   // Repos declaring a port layout need a base port before their local config
   // can be generated; same flow as clone.
-  const portLayout = await readPortLayout(mainPath)
+  //
+  // Canonicalised because port slot assignment matches this against the paths
+  // `git worktree list` reports, which are realpaths — and an import may have
+  // just moved the checkout, or arrived via a symlinked parent such as
+  // macOS /tmp.
+  const portMainPath = canonical(mainPath)
+  const portLayout = await readPortLayout(portMainPath)
   const basePortInput =
     options.basePort ??
     (portLayout && canPrompt()
@@ -296,11 +302,11 @@ export async function runImport(
         })
       : undefined)
   const basePort = basePortInput
-    ? await configureBasePort(mainPath, config.reposFile, basePortInput)
+    ? await configureBasePort(portMainPath, config.reposFile, basePortInput)
     : null
   if (portLayout && basePort !== null) {
-    const { layout, assignment } = await portsForWorktree(mainPath, mainPath)
-    await generatePortFiles(mainPath, layout, assignment)
+    const { layout, assignment } = await portsForWorktree(portMainPath, portMainPath)
+    await generatePortFiles(portMainPath, layout, assignment)
   }
   const portWarning =
     portLayout && basePort === null

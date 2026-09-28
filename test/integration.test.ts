@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
-import { writeFile, readFile, mkdir, readdir } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, readdir, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   createSandbox,
@@ -1846,5 +1846,114 @@ describe('wt create --github', () => {
     expect(result.exitCode).toBe(0)
     expect(result.json<{ github: unknown }>().github).toBeNull()
     expect(existsSync(logFile)).toBe(false)
+  })
+})
+
+describe('base ports on clone and import', () => {
+  /**
+   * A remote whose worktree.json declares a port layout with a dotenv mapping,
+   * so generated files are observable.
+   */
+  async function seedPortRepo(): Promise<void> {
+    await writeFile(
+      join(sandbox.mainPath, 'worktree.json'),
+      `${JSON.stringify(
+        {
+          ports: {
+            perWorktree: 20,
+            services: { web: { offset: 0, dotenv: { path: '.env', env: 'WEB_PORT' } } },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    await gitIn(['add', '.'], sandbox.mainPath)
+    await gitIn(['commit', '-m', 'add ports'], sandbox.mainPath)
+    await gitIn(['push', 'origin', 'main'], sandbox.mainPath)
+  }
+
+  it('configures a base port when cloning', async () => {
+    await seedPortRepo()
+    const result = await runCli(
+      ['clone', sandbox.remote, 'ported', '--no-alias', '--base-port', '4000', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number; portWarning: string | null; mainPath: string }>()
+    expect(data.basePort).toBe(4000)
+    expect(data.portWarning).toBeNull()
+    // The generated dotenv proves slot assignment ran, not just config writing.
+    expect(await readFile(join(data.mainPath, '.env'), 'utf8')).toContain('WEB_PORT=4000')
+  })
+
+  it('configures a base port when importing', async () => {
+    await seedPortRepo()
+    const path = join(sandbox.root, 'imported')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['import', path, '--restructure', '--no-alias', '--base-port', '5000', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number; portWarning: string | null; mainPath: string }>()
+    expect(data.basePort).toBe(5000)
+    expect(data.portWarning).toBeNull()
+    expect(await readFile(join(data.mainPath, '.env'), 'utf8')).toContain('WEB_PORT=5000')
+  })
+
+  it('warns when a port layout exists but no base port was given', async () => {
+    await seedPortRepo()
+    const path = join(sandbox.root, 'unported')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['import', path, '--no-restructure', '--no-alias', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number | null; portWarning: string | null }>()
+    expect(data.basePort).toBeNull()
+    expect(data.portWarning).toContain('no base port was set')
+  })
+
+  /**
+   * The sandbox root is deliberately realpath'd, so the tests above cannot
+   * reach the symlink case. Port slot assignment compares the path it is given
+   * against `git worktree list` output, which git always reports as a realpath —
+   * so a path reached through a symlink (macOS /tmp, a symlinked home) must be
+   * canonicalised or assignment fails with "not a registered worktree".
+   */
+  it('configures a base port through a symlinked parent directory', async () => {
+    await seedPortRepo()
+    const real = join(sandbox.root, 'realdir')
+    const link = join(sandbox.root, 'linkdir')
+    await mkdir(real, { recursive: true })
+    await symlink(real, link)
+
+    const result = await runCli(
+      ['clone', sandbox.remote, 'symported', '--no-alias', '--base-port', '7000', '--json'],
+      sandbox,
+      { GROVE_DEFAULT_CODE_DIR: link },
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number; portWarning: string | null; mainPath: string }>()
+    expect(data.basePort).toBe(7000)
+    expect(data.portWarning).toBeNull()
+    expect(await readFile(join(data.mainPath, '.env'), 'utf8')).toContain('WEB_PORT=7000')
+  })
+
+  it('still carries --base-port through the deprecated repos add', async () => {
+    await seedPortRepo()
+    const path = join(sandbox.root, 'legacyported')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['repos', 'add', path, '--name', 'legacyported', '--base-port', '6000', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.json<{ basePort: number }>().basePort).toBe(6000)
   })
 })

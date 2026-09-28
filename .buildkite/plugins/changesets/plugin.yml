@@ -47,6 +47,13 @@ configuration:
     agents:
       type: object
       description: Agent tags applied to the steps this plugin uploads.
+    depends-on:
+      type: array
+      items:
+        type: string
+      description: >-
+        Step keys the generated release steps depend on, so a version or
+        publish never runs on a commit whose tests have not passed.
   required:
     - mode
   additionalProperties: false

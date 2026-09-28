@@ -51,6 +51,24 @@ collect_agents() {
   ' "$prefix"
 }
 
+# Plugin array config arrives as BUILDKITE_PLUGIN_..._<N>; gather it back into
+# a list. A single scalar arrives unsuffixed, so accept that too.
+collect_depends_on() {
+  local prefix='BUILDKITE_PLUGIN_CHANGESETS_DEPENDS_ON'
+  node -e '
+    const prefix = process.argv[1]
+    const single = process.env[prefix]
+    if (single) { console.log(JSON.stringify([single])); process.exit(0) }
+    const out = []
+    for (let i = 0; ; i++) {
+      const v = process.env[`${prefix}_${i}`]
+      if (v === undefined) { break }
+      out.push(v)
+    }
+    console.log(JSON.stringify(out))
+  ' "$prefix"
+}
+
 # The generated step re-references *this plugin* rather than calling a script by
 # path. $PLUGIN_DIR is a checkout directory on the agent running the upload, and
 # the step it generates may well be picked up by a different agent, where that
@@ -63,7 +81,7 @@ emit_step() {
   local label="$1" step_mode="$2"
   node -e '
     const [label, stepMode, agentsJson, group, command, pluginsJson, publishMode,
-           release, npmUser] = process.argv.slice(1)
+           release, npmUser, dependsOnJson] = process.argv.slice(1)
 
     // Find how this pipeline referred to the plugin, and reuse it verbatim, so
     // the generated step resolves the same way this one did -- including a
@@ -107,6 +125,13 @@ emit_step() {
     }
     if (command) { step.command = command }
 
+    // Never release a commit whose tests have not passed. depends_on rather
+    // than a wait: a wait is a barrier against steps already in the same
+    // uploaded pipeline, and this step is uploaded separately from the ones it
+    // depends on, so a wait would have nothing above it to wait for.
+    const dependsOn = JSON.parse(dependsOnJson || "[]")
+    if (dependsOn.length) { step.depends_on = dependsOn }
+
     const agents = JSON.parse(agentsJson || "{}")
     if (Object.keys(agents).length) { step.agents = agents }
 
@@ -117,7 +142,8 @@ emit_step() {
     "${BUILDKITE_PLUGINS:-[]}" \
     "$PUBLISH_MODE" \
     "${BUILDKITE_PLUGIN_CHANGESETS_RELEASE:-true}" \
-    "${BUILDKITE_PLUGIN_CHANGESETS_NPM_USER:-}"
+    "${BUILDKITE_PLUGIN_CHANGESETS_NPM_USER:-}" \
+    "$(collect_depends_on)"
 }
 
 if [[ "$PENDING" -gt 0 ]]; then

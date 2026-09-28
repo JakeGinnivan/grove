@@ -330,6 +330,64 @@ Grove does not run it by default. Review the file first, then opt in with
 `--setup`. A failing command warns and continues rather than aborting the
 worktree. The older `--no-setup` flag remains accepted for compatibility.
 
+## Worktree ports
+
+Repos can declare a port block and named service offsets in `worktree.json`:
+
+```json
+{
+  "ports": {
+    "perWorktree": 20,
+    "worktreeSlots": 50,
+    "services": {
+      "webapp": {
+        "offset": 0,
+        "dotenv": { "env": "PORT" },
+        "compose": { "target": 3000 }
+      },
+      "api": { "offset": 1, "dotenv": { "env": "API_PORT" } }
+    }
+  }
+}
+```
+
+Choose a machine-local start port when cloning or registering the repo with
+`--base-port 3800`, or run `grove port configure --base-port 3800` inside an
+existing clone. Grove checks configured ranges against other registered repos.
+The main checkout uses slot 0; new worktrees use the first free slot starting
+at 1. With this example, the main checkout starts at 3800 and the first task
+worktree starts at 3820. In that worktree, Grove writes `PORT=3820` to `.env`
+for a host-run webapp. Its Compose override publishes `3820:3000` without
+changing the container environment. The API's generated host port is 3821.
+
+From inside a worktree, `grove port` prints its block start and
+`grove port --service api` prints the service port. `dotenv.path` defaults to
+`.env`. Grove writes the declared
+env variables and the local Compose override after worktree setup commands.
+`grove port --generate` regenerates both later; `--generate-env` and
+`--generate-compose` regenerate one format. Env generation updates only the
+configured variables. `grove port exec webapp -- pnpm exec next dev` starts a command with `PORT` in
+its process environment, which is needed for tools such as Next.js that
+choose their listening port before loading `.env`.
+
+Grove generates `compose.override.yaml`, which Docker Compose loads
+automatically, and refuses to overwrite an existing hand-written file.
+`compose.target` is the container's listening port; Grove does not change
+container environment variables. `dotenv.env` receives the computed host
+port. Set `compose.service` when the Compose service name differs
+from the Grove service name. The generated file uses Compose's `!override` tag to replace
+the service's complete `ports` list,
+including any fixed ports in the base file; declare every port you want to
+publish for that service. This requires Docker Compose 2.24.4 or newer. Ignore
+generated local files in Git.
+
+The default is 50 secondary worktree slots. Grove warns when five or fewer
+unique slots remain. After all slots are occupied, assignments wrap through
+slots 1–50 and warn about the duplicate. Review eligible old worktrees with
+`grove cleanup <repo> --merged --dry-run`; `git worktree prune` only clears
+records for worktree directories that are already missing. See the
+[port design](docs/port-offset-plan.md) and [integration conventions](docs/port-conventions.md).
+
 ## Configuration
 
 `grove setup` writes `~/.config/grove/config.json`:

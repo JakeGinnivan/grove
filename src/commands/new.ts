@@ -142,6 +142,8 @@ async function runNew(
       branch: created.branch,
       base: created.base,
       parent: created.parent ?? null,
+      port: created.port,
+      portWarning: created.portWarning,
     })
     return
   }

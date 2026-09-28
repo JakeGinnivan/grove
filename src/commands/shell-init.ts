@@ -74,6 +74,7 @@ const COMMANDS: [string, string][] = [
   ['pick', 'Select a worktree and cd into it'],
   ['sync', 'Fetch and fast-forward a repo main checkout'],
   ['cleanup', 'Remove finished worktrees'],
+  ['port', 'Look up and generate worktree ports'],
   ['clone', 'Clone a repo and register it'],
   ['repos', 'List registered repos'],
   ['profile', 'Manage clone profiles'],

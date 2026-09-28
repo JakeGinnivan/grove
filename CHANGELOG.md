@@ -1,5 +1,13 @@
 # @jakeginnivan/grove
 
+## 0.4.0
+
+### Minor Changes
+
+- a59ca3d: Assign stable port blocks to worktrees, generate configured environment variables
+  and local Docker Compose overrides, and support service port lookup and
+  launch-time injection.
+
 ## 0.3.2
 
 ### Patch Changes

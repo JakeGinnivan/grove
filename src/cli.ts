@@ -18,6 +18,7 @@ import { skillsCommand } from './commands/skills.js'
 import { shellInitCommand } from './commands/shell-init.js'
 import { profileCommand } from './commands/profile.js'
 import { completeCommand } from './commands/complete.js'
+import { portCommand } from './commands/port.js'
 
 // package.json is the single source of truth for the version; changesets bumps
 // it and nothing else needs updating. npm always ships it next to the bundle,
@@ -43,6 +44,7 @@ function buildProgram(): Command {
   program.addCommand(pickCommand())
   program.addCommand(syncCommand())
   program.addCommand(cleanupCommand())
+  program.addCommand(portCommand())
   program.addCommand(cloneCommand())
   program.addCommand(reposCommand())
   program.addCommand(profileCommand())

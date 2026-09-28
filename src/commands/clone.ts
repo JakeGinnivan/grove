@@ -19,8 +19,9 @@ import {
 } from '../core/registry.js'
 import { repoNameFromUrl } from '../core/naming.js'
 import { git } from '../core/git.js'
-import { optionalText, select, canPrompt } from '../core/prompts.js'
-import { emitJson, emitCd, log, success, info, getOutputContext } from '../core/output.js'
+import { optionalText, requireText, select, canPrompt } from '../core/prompts.js'
+import { emitJson, emitCd, log, success, info, warn, getOutputContext } from '../core/output.js'
+import { configureBasePort, generatePortFiles, portsForWorktree, readPortLayout } from '../core/ports.js'
 import { WtError, NeedsInputError } from '../core/errors.js'
 
 export function cloneCommand(): Command {
@@ -32,6 +33,7 @@ export function cloneCommand(): Command {
     .option('-a, --alias <alias>', 'short alias for the repo')
     .option('--no-alias', 'skip the alias prompt')
     .option('--dir <path>', 'explicit parent directory, overriding the profile')
+    .option('--base-port <port>', 'local start port for this repo')
     .action(async (url, nameArg, options) => {
       await runClone(url, nameArg, options)
     })
@@ -41,6 +43,7 @@ interface CloneOptions {
   profile?: string
   alias?: string | false
   dir?: string
+  basePort?: string
 }
 
 /**
@@ -123,6 +126,27 @@ async function runClone(
     allowFailure: true,
   })
 
+  const portLayout = await readPortLayout(cloneTarget)
+  const basePortInput = options.basePort ?? (portLayout && canPrompt()
+    ? await requireText(undefined, {
+      message: `Base port for ${repoName}`,
+      flag: '--base-port',
+      what: 'A base port',
+      placeholder: '3800',
+    })
+    : undefined)
+  const basePort = basePortInput
+    ? await configureBasePort(cloneTarget, config.reposFile, basePortInput)
+    : null
+  if (portLayout && basePort !== null) {
+    const { layout, assignment } = await portsForWorktree(cloneTarget, cloneTarget)
+    await generatePortFiles(cloneTarget, layout, assignment)
+  }
+  const portWarning = portLayout && basePort === null
+    ? 'Port layout found, but no base port was set. Run grove port configure --base-port <port>.'
+    : null
+  if (portWarning) warn(portWarning)
+
   let alias: string | undefined
   if (options.alias === false) {
     alias = undefined
@@ -146,6 +170,8 @@ async function runClone(
       profile: profile?.name ?? null,
       path: repoParent,
       mainPath: cloneTarget,
+      basePort,
+      portWarning,
     })
     return
   }

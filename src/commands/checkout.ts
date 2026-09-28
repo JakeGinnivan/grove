@@ -205,6 +205,8 @@ async function runCheckout(
       branch: created.branch,
       base: created.base,
       parent: created.parent ?? null,
+      port: created.port,
+      portWarning: created.portWarning,
       created: resolution.exists === 'none',
       source: resolution.exists,
     })

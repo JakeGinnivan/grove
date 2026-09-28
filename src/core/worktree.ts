@@ -14,6 +14,14 @@ import {
 } from './git.js'
 import { runSetupCommands } from './setup-hooks.js'
 import { info } from './output.js'
+import { warn } from './output.js'
+import {
+  assignPortSlot,
+  configuredBasePort,
+  generatePortFiles,
+  readPortLayout,
+  type PortAssignment,
+} from './ports.js'
 
 /** git config key recording which branch a stacked worktree was built on. */
 export const PARENT_CONFIG_KEY = (branch: string) =>
@@ -49,6 +57,8 @@ export interface CreatedWorktree {
   branch: string
   base: string
   parent: string | undefined
+  port: PortAssignment | null
+  portWarning: string | null
 }
 
 /**
@@ -166,17 +176,29 @@ export async function createWorktree(
     await setConfig(gitDir, PARENT_CONFIG_KEY(branch), parentBranch)
   }
 
+  const rootWorktree = existsSync(join(repoPath, 'main'))
+    ? join(repoPath, 'main')
+    : gitDir
+  const portLayout = await readPortLayout(rootWorktree)
+  const basePort = portLayout ? await configuredBasePort(rootWorktree) : undefined
+  const port = portLayout && basePort !== undefined
+    ? await assignPortSlot(rootWorktree, fullPath, portLayout, basePort)
+    : null
+  const portWarning = portLayout && basePort === undefined
+    ? 'Port layout exists, but this clone has no base port. Run grove port configure --base-port <port>.'
+    : port?.warning ?? null
+  if (portLayout && basePort === undefined) warn(portWarning!)
+
   if (setup) {
-    const rootWorktree = existsSync(join(repoPath, 'main'))
-      ? join(repoPath, 'main')
-      : gitDir
     // Setup config is read from the root worktree, not the parent directory:
     // `worktree.json` is committed at the repo root, and the parent dir that
     // holds the worktrees is not version controlled at all.
     await runSetupCommands(rootWorktree, fullPath, rootWorktree)
   }
 
-  return { path: fullPath, branch, base, parent: parentBranch }
+  if (portLayout && port) await generatePortFiles(fullPath, portLayout, port)
+
+  return { path: fullPath, branch, base, parent: parentBranch, port, portWarning }
 }
 
 /** Read the recorded stack parent for a branch, if any. */

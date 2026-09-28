@@ -8,6 +8,9 @@ import { emitJson, log, success, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
 import { isGitRepo } from '../core/git.js'
 import { resolve } from 'node:path'
+import { configureBasePort, generatePortFiles, portsForWorktree, readPortLayout } from '../core/ports.js'
+import { canPrompt, requireText } from '../core/prompts.js'
+import { warn } from '../core/output.js'
 
 export function reposCommand(): Command {
   const command = new Command('repos')
@@ -22,6 +25,7 @@ export function reposCommand(): Command {
     .argument('<path>', 'path to the repo or its worktree parent directory')
     .option('-n, --name <name>', 'name to register (default: directory name)')
     .option('-a, --alias <alias>', 'short alias')
+    .option('--base-port <port>', 'local start port for this repo')
     .action(async (path, options) => {
       await runAdd(path, options)
     })
@@ -102,7 +106,7 @@ async function runRepos(): Promise<void> {
 
 async function runAdd(
   pathArg: string,
-  options: { name?: string; alias?: string },
+  options: { name?: string; alias?: string; basePort?: string },
 ): Promise<void> {
   const config = await loadConfig()
   const path = resolve(pathArg)
@@ -122,10 +126,31 @@ async function runAdd(
   }
 
   const name = options.name ?? deriveName(path, isRepo && !hasMain)
+  const mainPath = hasMain ? join(path, 'main') : path
+  const portLayout = await readPortLayout(mainPath)
+  const basePortInput = options.basePort ?? (portLayout && canPrompt()
+    ? await requireText(undefined, {
+      message: `Base port for ${name}`,
+      flag: '--base-port',
+      what: 'A base port',
+      placeholder: '3800',
+    })
+    : undefined)
+  const basePort = basePortInput
+    ? await configureBasePort(mainPath, config.reposFile, basePortInput)
+    : null
+  if (portLayout && basePort !== null) {
+    const { layout, assignment } = await portsForWorktree(mainPath, mainPath)
+    await generatePortFiles(mainPath, layout, assignment)
+  }
+  const portWarning = portLayout && basePort === null
+    ? 'Port layout found, but no base port was set. Run grove port configure --base-port <port>.'
+    : null
+  if (portWarning) warn(portWarning)
   await writeRepo(config.reposFile, name, path, options.alias)
 
   if (getOutputContext().json) {
-    emitJson({ ok: true, name, path, alias: options.alias ?? null })
+    emitJson({ ok: true, name, path, alias: options.alias ?? null, basePort, portWarning })
     return
   }
   success(`Registered ${pc.cyan(name)} → ${path}`)

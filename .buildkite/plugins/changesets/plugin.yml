@@ -1,0 +1,59 @@
+name: Changesets
+description: Run the changesets release flow on Buildkite - gate PRs on a changeset, open the version PR, and publish or stage to npm.
+author: https://github.com/JakeGinnivan
+requirements:
+  - node
+  - git
+  - curl
+configuration:
+  properties:
+    mode:
+      type: string
+      enum:
+        - check
+        - upload
+        - version
+        - release
+      description: >-
+        check: fail a PR that changes the package without adding a changeset.
+        upload: on the default branch, decide whether this build opens the
+        version PR or releases, and upload the matching step. `version` and
+        `release` are what `upload` generates; you do not normally set them
+        yourself.
+    publish:
+      type: string
+      enum:
+        - publish
+        - stage
+        - none
+      description: >-
+        How mode=upload releases. `stage` uses `npm stage publish`, which defers
+        2FA to a human approval. `none` uploads no release step, leaving the
+        publish to your own step or another plugin.
+      default: publish
+    release:
+      type: boolean
+      description: Create a GitHub release from the CHANGELOG entry after a successful publish or stage.
+      default: true
+    npm-user:
+      type: string
+      description: >-
+        npm account whose staged-packages page is linked from the release notes.
+        Only meaningful with publish=stage; the page is per-account, so it is
+        omitted when unset.
+    command:
+      type: string
+      description: Command the generated steps run before releasing, e.g. to install dependencies and build.
+    agents:
+      type: object
+      description: Agent tags applied to the steps this plugin uploads.
+    depends-on:
+      type: array
+      items:
+        type: string
+      description: >-
+        Step keys the generated release steps depend on, so a version or
+        publish never runs on a commit whose tests have not passed.
+  required:
+    - mode
+  additionalProperties: false

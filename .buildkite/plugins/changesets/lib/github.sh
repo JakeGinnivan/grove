@@ -3,7 +3,7 @@
 #
 # Must be *sourced*, not executed.
 #
-#   source .buildkite/steps/github.sh
+#   source "$HERE/github.sh"
 
 # The agent clones with the Buildkite GitHub App, which is read-only: pushing
 # with those credentials fails with "Permission to ... denied to buildkite[bot]".

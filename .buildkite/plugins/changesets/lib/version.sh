@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
 # Opens or updates the "Version Packages" PR.
 #
-# upload.sh decides between this and publish.sh by running `changeset status`
-# at upload time, so the build page names which one is happening before it
-# runs. This script is only uploaded when changesets are pending.
+# Uploaded by mode-upload.sh when changesets are pending, so the build page
+# names which half of the release is happening before it runs.
 set -euo pipefail
 
-source .buildkite/steps/toolchain.sh
-source .buildkite/steps/github.sh
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/github.sh"
 
-pnpm install --frozen-lockfile
+# `changeset version` commits, so an identity is required.
+git config user.name "${BUILDKITE_PLUGIN_CHANGESETS_GIT_NAME:-buildkite}"
+git config user.email "${BUILDKITE_PLUGIN_CHANGESETS_GIT_EMAIL:-buildkite@users.noreply.github.com}"
 
-# changeset version commits, so an identity is required.
-git config user.name "buildkite"
-git config user.email "buildkite@users.noreply.github.com"
-
-# Recomputed here rather than passed from upload.sh: the status file is small,
-# the command is fast, and a step that reads its own inputs is easier to rerun.
-rm -f "$PWD/changeset-status.json"
-pnpm exec changeset status --output "$PWD/changeset-status.json" || true
+# Recomputed here rather than passed from the upload step: the status file is
+# small, the command is fast, and a step that reads its own inputs is easier to
+# rerun.
+STATUS_JSON="$PWD/changeset-status.json"
+rm -f "$STATUS_JSON"
+npx --no-install changeset status --output "$STATUS_JSON" || true
 
 # Show what this release would be, on the build itself.
-if [[ -s "$PWD/changeset-status.json" ]]; then
-  node .buildkite/steps/annotate-changesets.mjs < changeset-status.json |
+if [[ -s "$STATUS_JSON" ]]; then
+  node "$HERE/annotate-changesets.mjs" < "$STATUS_JSON" |
     buildkite-agent annotate --style info --context release
 fi
 
-pnpm changeset version
+npx --no-install changeset version
 
 # Nothing to do if `changeset version` produced no diff.
 if git diff --quiet; then
@@ -53,14 +52,14 @@ OPEN_PRS="$(github_api "https://api.github.com/repos/${REPO}/pulls?state=open&he
 if [[ "$OPEN_PRS" -gt 0 ]]; then
   echo "Version PR already open; the force-push updated it."
 else
-  # node builds the JSON so the title and body are escaped properly rather
-  # than interpolated into a string that a quote in a changeset could break.
+  # node builds the JSON so the title and body are escaped properly rather than
+  # interpolated into a string that a quote in a changeset could break.
   github_api -X POST "https://api.github.com/repos/${REPO}/pulls" \
     -d "$(node -e 'console.log(JSON.stringify({
       title: "chore: version packages",
       head: process.argv[1],
       base: process.argv[2],
-      body: "Automated version bump from changesets. Merging this stages the release on npm for approval.",
+      body: "Automated version bump from changesets. Merging this releases the versions listed above.",
     }))' "$BRANCH" "$BUILDKITE_BRANCH")" >/dev/null
   echo "Opened version PR for $BRANCH."
 fi

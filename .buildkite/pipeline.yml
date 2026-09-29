@@ -1,5 +1,6 @@
 # Entry point Buildkite loads for every build. It only decides *what* to run:
-# the real steps live in ci.yml and release.yml and are uploaded from here.
+# ci.yml is always uploaded, and the release half is decided by the changesets
+# plugin on this same step.
 #
 # The split exists because a release must not be attempted on a branch build,
 # and Buildkite has no equivalent of GitHub's `on: push: branches: [main]` —
@@ -7,5 +8,21 @@
 steps:
   - label: ':pipeline: upload'
     command: .buildkite/steps/upload.sh
+    plugins:
+      # Decides, at upload time, whether this build opens the version PR or
+      # stages the release, and uploads the one step for it. On anything but the
+      # tip of the default branch it does nothing.
+      #
+      # The generated step re-references this same vendored plugin and carries
+      # depends_on: ci, so a release still never runs on untested code.
+      - ./.buildkite/plugins/changesets:
+          mode: upload
+          publish: stage
+          npm-user: jakeginnivan
+          command: .buildkite/steps/install.sh
+          depends-on:
+            - ci
+          agents:
+            queue: linux-small
     agents:
       queue: linux-small

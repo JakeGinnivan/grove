@@ -11,9 +11,22 @@ steps:
 
   # Guards the release flow: a behaviour change merged without a changeset
   # would otherwise ship silently under the previous version number.
+  #
+  # Runs the vendored copy of the changesets plugin, which is the same code as
+  # JakeGinnivan/changesets-buildkite-plugin. It is vendored rather than
+  # referenced by tag so this pipeline proves it on a real build before there is
+  # a tag to pin -- and while vendored, the plugin is always at this repo's own
+  # commit, so there is no clone to go stale.
+  #
+  # The plugin deliberately knows nothing about mise or pnpm; installing the
+  # toolchain is the consumer's job, which is what the command is for. The
+  # plugin's own hook runs after it.
   - label: ':memo: changeset present'
     key: changeset
-    command: .buildkite/steps/changeset-check.sh
+    command: .buildkite/steps/install.sh
+    plugins:
+      - ./.buildkite/plugins/changesets:
+          mode: check
     agents:
       queue: linux-small
 

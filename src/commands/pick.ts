@@ -3,6 +3,7 @@ import { samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
 import { listWorktrees } from '../core/git.js'
+import { byRecency } from '../core/worktree.js'
 import { select } from '../core/prompts.js'
 import { emitJson, emitCd, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
@@ -73,7 +74,7 @@ async function runPick(
   } else {
     chosen = await select(
       `Worktree in ${repo.name}`,
-      worktrees.map((wt) => ({
+      (await byRecency(gitDir, worktrees)).map((wt) => ({
         value: wt.path,
         label: worktreeLabel(wt),
         hint: worktreeHint(wt),

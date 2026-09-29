@@ -4,6 +4,7 @@ import { WtError } from './errors.js'
 import { canonical } from './paths.js'
 import {
   git,
+  commitTimes,
   defaultBase,
   listWorktrees,
   localBranchExists,
@@ -237,4 +238,22 @@ export function secondaryWorktrees(
 ): Worktree[] {
   const primary = canonical(gitDir)
   return worktrees.filter((wt) => canonical(wt.path) !== primary && !wt.bare)
+}
+
+/**
+ * The primary checkout first, then the rest newest commit first. git lists
+ * the primary checkout first, so it stays pinned there. Ties keep git's order.
+ */
+export async function byRecency(
+  gitDir: string,
+  worktrees: Worktree[],
+): Promise<Worktree[]> {
+  const [primary, ...rest] = worktrees
+  if (!primary) return []
+  const times = await commitTimes(
+    gitDir,
+    rest.flatMap((wt) => (wt.head ? [wt.head] : [])),
+  )
+  const timeOf = (wt: Worktree) => (wt.head && times.get(wt.head)) || 0
+  return [primary, ...rest.sort((a, b) => timeOf(b) - timeOf(a))]
 }

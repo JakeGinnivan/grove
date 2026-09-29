@@ -442,6 +442,24 @@ describe('wt list', () => {
     const entry = data.worktrees.find((wt) => wt.path === path)
     expect(entry?.dirty).toBe(true)
   })
+
+  it('keeps main first and orders the rest newest commit first', async () => {
+    const paths: string[] = []
+    for (const title of ['alpha work', 'beta work']) {
+      const created = await runCli(['new', 'demo', '--title', title, '--json'], sandbox)
+      paths.push(created.json<{ path: string }>().path)
+    }
+    const [alpha, beta] = paths as [string, string]
+    // git lists alpha before beta, so give beta the later commit to prove the
+    // order comes from commit dates rather than git's listing.
+    await commitAt(['commit', '--allow-empty', '-m', 'alpha'], alpha, '2030-01-01T00:00:00Z')
+    await commitAt(['commit', '--allow-empty', '-m', 'beta'], beta, '2031-01-01T00:00:00Z')
+
+    const result = await runCli(['list', 'demo', '--json'], sandbox)
+    const data = result.json<{ worktrees: { path: string; isMain: boolean }[] }>()
+    expect(data.worktrees[0]?.isMain).toBe(true)
+    expect(data.worktrees.slice(1).map((wt) => wt.path)).toEqual([beta, alpha])
+  })
 })
 
 describe('wt sync', () => {

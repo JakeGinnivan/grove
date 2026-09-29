@@ -11,7 +11,7 @@ import {
   defaultBase,
   isMergedInto,
 } from '../core/git.js'
-import { stackParentOf } from '../core/worktree.js'
+import { byRecency, stackParentOf } from '../core/worktree.js'
 import { emitJson, log, getOutputContext } from '../core/output.js'
 import { pickRepo } from './shared.js'
 
@@ -42,7 +42,7 @@ export async function gatherWorktrees(
   gitDir: string,
   withStatus: boolean,
 ): Promise<WorktreeReport[]> {
-  const worktrees = await listWorktrees(gitDir)
+  const worktrees = await byRecency(gitDir, await listWorktrees(gitDir))
   const base = withStatus
     ? await defaultBase(gitDir).catch(() => undefined)
     : undefined
@@ -117,6 +117,7 @@ async function runList(
     const branch = report.branch ? pc.cyan(report.branch) : pc.dim('(detached)')
     const suffix = flags.length ? `  ${flags.join(' ')}` : ''
     log(`  ${name}  ${branch}${suffix}`)
+    if (report.isMain && reports.length > 1) log()
   }
   log()
 }

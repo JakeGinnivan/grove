@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Puts the mise toolchain on PATH for steps that run the changesets plugin.
+#
+# The plugin does its work in a post-command hook. PATH changes made by a
+# step's command stay in that command's shell and never reach the hook, so
+# sourcing toolchain.sh from the command left the hook on the agent image's
+# node 20.18, where the changesets CLI cannot load. Environment exported from a
+# hook does carry into the command and every later hook, so activating here
+# covers both.
+#
+# Only for plugin steps: the test step sources toolchain.sh itself, and the
+# initial pipeline upload and the CI status step need no toolchain at all.
+set -euo pipefail
+
+if [[ "${BUILDKITE_PLUGINS:-}" == *changesets* ]]; then
+  source .buildkite/steps/toolchain.sh
+fi

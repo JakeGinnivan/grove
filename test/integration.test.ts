@@ -1688,6 +1688,12 @@ describe('wt create', () => {
     const created = await runCli(['create', 'growing', '--no-alias', '--json'], sandbox)
     const { mainPath } = created.json<{ mainPath: string }>()
 
+    // `grove create` runs `git init`, so this repo has no identity of its own,
+    // and the fixtures deliberately run git with no global config. A developer
+    // machine has one to fall back on; a CI agent does not.
+    await gitIn(['config', 'user.email', 'test@example.com'], mainPath)
+    await gitIn(['config', 'user.name', 'Test'], mainPath)
+
     await writeFile(join(mainPath, 'README.md'), '# growing\n')
     await gitIn(['add', '.'], mainPath)
     await gitIn(['commit', '-m', 'initial'], mainPath)

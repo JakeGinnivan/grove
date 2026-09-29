@@ -46,6 +46,9 @@ fi
 # by exit code would fail a docs-only change on 3.x.
 #
 # So: capture the output and decide from it.
+source "$PLUGIN_DIR/lib/require-cli.sh"
+require_changeset_cli
+
 STATUS_JSON="$PWD/changeset-status.json"
 rm -f "$STATUS_JSON"
 set +e

@@ -21,6 +21,13 @@
 # has to run first; post-command runs after it in the same job, with whatever it
 # installed.
 #
+# What the command installs, not what it activates: files it writes are here,
+# but PATH or other variables it exports are not, because the command runs in
+# its own shell. A toolchain the command puts on PATH has to be put there by a
+# hook instead (an environment or post-checkout hook), or this hook runs on the
+# agent's default node. lib/require-cli.sh fails the job when that node cannot
+# load the CLI.
+#
 # post-command runs even when the command failed, and its own exit code can
 # replace the command's as the job result -- so a failed install must not be
 # reported as a changeset failure. Bail out early instead, leaving the real

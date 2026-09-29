@@ -20,6 +20,9 @@ if [[ "$BUILDKITE_BRANCH" != "$BUILDKITE_PIPELINE_DEFAULT_BRANCH" || "$BUILDKITE
   exit 0
 fi
 
+source "$PLUGIN_DIR/lib/require-cli.sh"
+require_changeset_cli
+
 # On @changesets/cli 2.31.1 this exits 0 and writes the file even when there is
 # nothing to release. That is NOT true on 3.x, where the empty case exits 1 and
 # writes no file at all -- which under `set -e` would fail the upload on a

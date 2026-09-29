@@ -212,7 +212,36 @@ export async function multiselect(
   )
 }
 
-export const spinner = (options: Parameters<typeof clack.spinner>[0] = {}) =>
+/**
+ * A multiselect split under group headings. Keys of `groups` are the
+ * headings; toggling a heading toggles every option under it. Empty groups
+ * are dropped so no heading appears with nothing beneath it.
+ */
+export async function groupMultiselect(
+  message: string,
+  groups: Record<string, SelectOption[]>,
+  what = 'A selection',
+  initialValues?: string[],
+): Promise<string[]> {
+  const nonEmpty = Object.fromEntries(
+    Object.entries(groups).filter(([, options]) => options.length > 0),
+  )
+  if (Object.keys(nonEmpty).length === 0) return []
+  if (!canPrompt()) {
+    throw new NeedsInputError(what, 'the values as arguments')
+  }
+  return guard(
+    await clack.groupMultiselect({
+      ...PROMPT_STREAM,
+      message,
+      options: nonEmpty,
+      required: false,
+      ...(initialValues ? { initialValues } : {}),
+    }),
+  )
+}
+
+export const spinner =(options: Parameters<typeof clack.spinner>[0] = {}) =>
   clack.spinner({ ...PROMPT_STREAM, ...options })
 export const intro = (title: string) => {
   if (canPrompt()) clack.intro(title, PROMPT_STREAM)

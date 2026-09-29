@@ -1,12 +1,13 @@
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolve, basename, dirname } from 'node:path'
+import { styleText } from 'node:util'
 import { canonical, samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
 import { git, listWorktrees, localBranchExists } from '../core/git.js'
 import { canTrash, moveToTrash } from '../core/trash.js'
-import { multiselect, confirm } from '../core/prompts.js'
+import { groupMultiselect, confirm } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
 import { pickRepo } from './shared.js'
@@ -102,14 +103,23 @@ async function runCleanup(
       return
     }
   } else {
-    const chosen = await multiselect(
+    const groups = groupCandidates(candidates)
+    const width = Math.max(...candidates.map((report) => report.dir.length))
+    const chosen = await groupMultiselect(
       'Select worktrees to remove',
-      candidates.map((report) => ({
-        value: report.path,
-        label: report.dir,
-        hint: describeFlags(report),
-      })),
+      Object.fromEntries(
+        groups.map((group) => [
+          `${group.title} (${group.reports.length})`,
+          group.reports.map((report) => ({
+            value: report.path,
+            label: pickerLabel(report, width),
+          })),
+        ]),
+      ),
       'Worktree names',
+      groups
+        .filter((group) => group.preselect)
+        .flatMap((group) => group.reports.map((report) => report.path)),
     )
     selected = candidates.filter((report) => chosen.includes(report.path))
   }
@@ -193,6 +203,52 @@ function describeFlags(report: WorktreeReport): string {
   if (report.merged) flags.push('merged')
   if (!report.upstream && !report.merged) flags.push('no upstream')
   return flags.join(', ')
+}
+
+export interface CandidateGroup {
+  title: string
+  reports: WorktreeReport[]
+  preselect: boolean
+}
+
+/**
+ * Bucket worktrees by how safe they are to remove. Merged-and-clean ones are
+ * preselected because removing them loses nothing; anything with local
+ * changes lands last so it is never picked by accident.
+ */
+export function groupCandidates(reports: WorktreeReport[]): CandidateGroup[] {
+  const groups: CandidateGroup[] = [
+    { title: 'Merged', reports: [], preselect: true },
+    { title: 'Clean, not merged', reports: [], preselect: false },
+    { title: 'Uncommitted changes', reports: [], preselect: false },
+  ]
+  const [merged, clean, dirty] = groups as [CandidateGroup, CandidateGroup, CandidateGroup]
+  for (const report of reports) {
+    if (report.dirty) dirty.reports.push(report)
+    else if (report.merged) merged.reports.push(report)
+    else clean.reports.push(report)
+  }
+  return groups.filter((group) => group.reports.length > 0)
+}
+
+/**
+ * clack only shows an option's hint on the row under the cursor, so status
+ * goes in the label itself to be scannable down the whole list. Styled
+ * against stderr because that is where prompts render; stdout is often the
+ * shell wrapper's pipe and would report no colour support.
+ */
+function pickerLabel(report: WorktreeReport, width: number): string {
+  const paint = (format: Parameters<typeof styleText>[0], text: string) =>
+    styleText(format, text, { stream: process.stderr })
+  const tags: string[] = [
+    report.dirty
+      ? paint('yellow', '● uncommitted changes')
+      : paint('green', '○ clean'),
+  ]
+  if (report.merged) tags.push(paint('green', '✔ merged'))
+  if (report.ahead > 0) tags.push(paint('yellow', `${report.ahead} unpushed`))
+  if (!report.upstream && !report.merged) tags.push(paint('gray', 'no upstream'))
+  return `${report.dir.padEnd(width)}  ${tags.join('  ')}`
 }
 
 async function removeOne(

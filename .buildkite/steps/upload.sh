@@ -8,8 +8,8 @@ set -euo pipefail
 
 buildkite-agent pipeline upload .buildkite/ci.yml
 
-# The toolchain is installed for that hook: it runs `changeset status` to work
+# Dependencies are installed for that hook: it runs `changeset status` to work
 # out whether this build opens the version PR or stages the release, so it
-# needs the CLI this installs.
-source .buildkite/steps/toolchain.sh
+# needs the CLI this installs. The toolchain is already on PATH, activated by
+# .buildkite/hooks/post-checkout so that the hook gets it too.
 pnpm install --frozen-lockfile

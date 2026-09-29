@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
-import { writeFile, readFile, mkdir, readdir } from 'node:fs/promises'
+import { writeFile, readFile, mkdir, readdir, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   createSandbox,
@@ -1055,16 +1055,60 @@ describe('grove profile', () => {
   })
 })
 
+describe('wt repos add (deprecated)', () => {
+  it('forwards to import, warns, and leaves the layout alone', async () => {
+    const path = join(sandbox.root, 'legacy')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['repos', 'add', path, '--name', 'legacy', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{
+      name: string
+      mainPath: string
+      restructured: boolean
+      deprecated: string
+    }>()
+    expect(data.name).toBe('legacy')
+    // The old command never restructured, and the shim keeps that behaviour.
+    expect(data.restructured).toBe(false)
+    expect(existsSync(join(path, '.git'))).toBe(true)
+    // --json swallows the stderr warning, so the notice rides in the payload.
+    expect(data.deprecated).toContain('grove import')
+
+    const repos = await runCli(['repos', '--json'], sandbox)
+    const names = repos.json<{ repos: { name: string }[] }>().repos.map((r) => r.name)
+    expect(names).toContain('legacy')
+  })
+
+  it('warns on stderr in human mode', async () => {
+    const path = join(sandbox.root, 'legacy2')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(['repos', 'add', path, '--name', 'legacy2'], sandbox)
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toContain('deprecated')
+    expect(result.stderr).toContain('grove import')
+  })
+
+  it('stays hidden from the repos help output', async () => {
+    const result = await runCli(['repos', '--help'], sandbox)
+    expect(result.stdout).not.toContain('add')
+  })
+})
+
 describe('registry aliases', () => {
   it('refuses an alias that collides with an existing repo name', async () => {
     // Names and aliases share one namespace, so accepting this would delete
     // the existing repo's registration.
     const other = join(sandbox.root, 'code', 'other')
     await mkdir(other, { recursive: true })
-    await runCli(['repos', 'add', sandbox.repoPath, '--name', 'keepme', '--json'], sandbox)
+    await runCli(['import', sandbox.repoPath, 'keepme', '--no-alias', '--json'], sandbox)
 
     const result = await runCli(
-      ['repos', 'add', sandbox.repoPath, '--name', 'newrepo', '--alias', 'keepme', '--json'],
+      ['import', sandbox.repoPath, 'newrepo', '--alias', 'keepme', '--json'],
       sandbox,
     )
     expect(result.exitCode).toBe(1)
@@ -1390,5 +1434,532 @@ describe('wt pick', () => {
   it('jumps to main with --main', async () => {
     const result = await runCli(['pick', 'demo', '--main', '--json'], sandbox)
     expect(result.json<{ path: string }>().path).toBe(sandbox.mainPath)
+  })
+})
+
+describe('wt import', () => {
+  /** A plain clone with no main/ subfolder — the layout import fixes up. */
+  async function makePlainClone(name: string): Promise<string> {
+    const path = join(sandbox.root, name)
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+    return path
+  }
+
+  it('moves a plain clone into main/ and registers the parent', async () => {
+    const path = await makePlainClone('loose')
+
+    const result = await runCli(
+      ['import', path, '--restructure', '--no-alias', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{
+      name: string
+      path: string
+      mainPath: string
+      restructured: boolean
+    }>()
+    expect(data).toMatchObject({
+      name: 'loose',
+      path,
+      mainPath: join(path, 'main'),
+      restructured: true,
+    })
+
+    // The checkout moved wholesale, history and all.
+    expect(existsSync(join(path, 'main', '.git'))).toBe(true)
+    expect(existsSync(join(path, '.git'))).toBe(false)
+    expect(await gitIn(['log', '--oneline'], join(path, 'main'))).toContain('initial')
+  })
+
+  it('registers a plain clone as-is with --no-restructure', async () => {
+    const path = await makePlainClone('asis')
+
+    const result = await runCli(
+      ['import', path, '--no-restructure', '--no-alias', '--json'],
+      sandbox,
+    )
+    const data = result.json<{ mainPath: string; restructured: boolean }>()
+    expect(data.restructured).toBe(false)
+    expect(data.mainPath).toBe(path)
+    // Untouched: the checkout is still the folder itself.
+    expect(existsSync(join(path, '.git'))).toBe(true)
+  })
+
+  it('demands a layout decision rather than moving files unasked', async () => {
+    const path = await makePlainClone('undecided')
+
+    const result = await runCli(['import', path, '--no-alias', '--json'], sandbox)
+    expect(result.exitCode).toBe(2)
+    const error = result.json<{ error: { code: string; hint: string } }>().error
+    expect(error.code).toBe('needs_input')
+    expect(error.hint).toContain('--restructure')
+    // Nothing was moved while it was asking.
+    expect(existsSync(join(path, '.git'))).toBe(true)
+  })
+
+  it('accepts an already-correct layout untouched', async () => {
+    const result = await runCli(
+      ['import', sandbox.repoPath, 'again', '--no-alias', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ mainPath: string; restructured: boolean }>()
+    expect(data.mainPath).toBe(sandbox.mainPath)
+    expect(data.restructured).toBe(false)
+  })
+
+  it('names the repo after the parent when pointed at main/ itself', async () => {
+    const result = await runCli(
+      ['import', sandbox.mainPath, '--no-alias', '--json'],
+      sandbox,
+    )
+    const data = result.json<{ name: string; path: string; mainPath: string }>()
+    expect(data.name).toBe('demo')
+    expect(data.path).toBe(sandbox.repoPath)
+    expect(data.mainPath).toBe(sandbox.mainPath)
+  })
+
+  it('refuses to restructure a repo that has linked worktrees', async () => {
+    // A worktree records its repo path, so moving the checkout would break it.
+    const path = await makePlainClone('withwt')
+    await gitIn(['worktree', 'add', join(sandbox.root, 'wt-extra'), '-b', 'extra'], path)
+
+    const result = await runCli(
+      ['import', path, '--restructure', '--no-alias', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(1)
+    expect(result.json<{ error: { code: string } }>().error.code).toBe(
+      'has_linked_worktrees',
+    )
+    // Left exactly as it was.
+    expect(existsSync(join(path, '.git'))).toBe(true)
+  })
+
+  it('rejects a path that is not a git repo', async () => {
+    const path = join(sandbox.root, 'empty')
+    await mkdir(path, { recursive: true })
+    const result = await runCli(['import', path, '--json'], sandbox)
+    expect(result.exitCode).toBe(1)
+    expect(result.json<{ error: { code: string } }>().error.code).toBe('not_a_repo')
+  })
+
+  it('points at the repo root when given a subdirectory of one', async () => {
+    const path = await makePlainClone('deep')
+    const nested = join(path, 'nested')
+    await mkdir(nested, { recursive: true })
+
+    const result = await runCli(['import', nested, '--json'], sandbox)
+    expect(result.exitCode).toBe(1)
+    const error = result.json<{ error: { code: string; hint: string } }>().error
+    expect(error.code).toBe('not_repo_root')
+    expect(error.hint).toContain('grove import')
+  })
+
+  it('moves the repo under a profile when asked', async () => {
+    const workDir = join(sandbox.root, 'work')
+    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    const path = await makePlainClone('relocate')
+
+    const result = await runCli(
+      ['import', path, '--restructure', '--profile', 'work', '--no-alias', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{
+      path: string
+      mainPath: string
+      profile: string
+      moved: boolean
+    }>()
+    expect(data).toMatchObject({
+      path: join(workDir, 'relocate'),
+      mainPath: join(workDir, 'relocate', 'main'),
+      profile: 'work',
+      moved: true,
+    })
+    expect(existsSync(path)).toBe(false)
+    expect(await gitIn(['log', '--oneline'], data.mainPath)).toContain('initial')
+  })
+
+  it('registers the imported repo so other commands resolve it', async () => {
+    const path = await makePlainClone('usable')
+    await runCli(
+      ['import', path, '--restructure', '--alias', 'usbl', '--json'],
+      sandbox,
+    )
+
+    const repos = await runCli(['repos', '--json'], sandbox)
+    const names = repos
+      .json<{ repos: { name: string; mainPath: string | null }[] }>()
+      .repos.map((repo) => repo.name)
+    expect(names).toContain('usable')
+    expect(names).toContain('usbl')
+
+    // The alias resolves through to a working checkout.
+    const list = await runCli(['list', 'usbl', '--json'], sandbox)
+    expect(list.exitCode).toBe(0)
+  })
+})
+
+describe('wt create', () => {
+  it('creates a repo in the main/ layout and registers it', async () => {
+    const result = await runCli(['create', 'fresh', '--no-alias', '--json'], sandbox)
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{
+      name: string
+      path: string
+      mainPath: string
+      branch: string
+    }>()
+    expect(data).toMatchObject({
+      name: 'fresh',
+      path: join(sandbox.root, 'code', 'fresh'),
+      mainPath: join(sandbox.root, 'code', 'fresh', 'main'),
+      branch: 'main',
+    })
+    expect(existsSync(join(data.mainPath, '.git'))).toBe(true)
+  })
+
+  it('defaults the initial branch to main regardless of git config', async () => {
+    const result = await runCli(['create', 'branchy', '--no-alias', '--json'], sandbox,
+      { GIT_CONFIG_COUNT: '2',
+        GIT_CONFIG_KEY_1: 'init.defaultBranch',
+        GIT_CONFIG_VALUE_1: 'master' },
+    )
+    const data = result.json<{ mainPath: string; branch: string }>()
+    expect(data.branch).toBe('main')
+    expect(await gitIn(['symbolic-ref', '--short', 'HEAD'], data.mainPath)).toBe('main')
+  })
+
+  it('honours an explicit --branch', async () => {
+    const result = await runCli(
+      ['create', 'trunky', '-b', 'trunk', '--no-alias', '--json'],
+      sandbox,
+    )
+    const data = result.json<{ mainPath: string; branch: string }>()
+    expect(data.branch).toBe('trunk')
+    expect(await gitIn(['symbolic-ref', '--short', 'HEAD'], data.mainPath)).toBe('trunk')
+  })
+
+  it('leaves the repo without commits', async () => {
+    const result = await runCli(['create', 'unborn', '--no-alias', '--json'], sandbox)
+    const { mainPath } = result.json<{ mainPath: string }>()
+    // An unborn HEAD has no commits to count, so rev-list fails.
+    await expect(gitIn(['rev-parse', 'HEAD'], mainPath)).rejects.toThrow()
+  })
+
+  it('refuses to overwrite an existing checkout', async () => {
+    await runCli(['create', 'twice', '--no-alias', '--json'], sandbox)
+    const result = await runCli(['create', 'twice', '--no-alias', '--json'], sandbox)
+    expect(result.exitCode).toBe(1)
+    const error = result.json<{ error: { code: string; hint: string } }>().error
+    expect(error.code).toBe('create_target_exists')
+    expect(error.hint).toContain('grove import')
+  })
+
+  it('routes into a profile directory like clone does', async () => {
+    const ossDir = join(sandbox.root, 'oss')
+    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
+
+    const result = await runCli(
+      ['create', 'scoped', '--profile', 'oss', '--no-alias', '--json'],
+      sandbox,
+    )
+    const data = result.json<{ path: string; profile: string }>()
+    expect(data.profile).toBe('oss')
+    expect(data.path).toBe(join(ossDir, 'scoped'))
+  })
+
+  it('requires a profile when several exist and no default is set', async () => {
+    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    await runCli(['profile', 'add', 'oss', join(sandbox.root, 'oss'), '--json'], sandbox)
+
+    const result = await runCli(['create', 'ambiguous', '--no-alias', '--json'], sandbox)
+    expect(result.exitCode).toBe(2)
+    const error = result.json<{ error: { code: string; hint: string } }>().error
+    expect(error.code).toBe('needs_input')
+    expect(error.hint).toContain('--profile')
+  })
+
+  it('supports a worktree once the first commit exists', async () => {
+    const created = await runCli(['create', 'growing', '--no-alias', '--json'], sandbox)
+    const { mainPath } = created.json<{ mainPath: string }>()
+
+    // `grove create` runs `git init`, so this repo has no identity of its own,
+    // and the fixtures deliberately run git with no global config. A developer
+    // machine has one to fall back on; a CI agent does not.
+    await gitIn(['config', 'user.email', 'test@example.com'], mainPath)
+    await gitIn(['config', 'user.name', 'Test'], mainPath)
+
+    await writeFile(join(mainPath, 'README.md'), '# growing\n')
+    await gitIn(['add', '.'], mainPath)
+    await gitIn(['commit', '-m', 'initial'], mainPath)
+
+    // No remote, so the base has to be named explicitly.
+    const result = await runCli(
+      ['new', 'growing', '--title', 'first task', '--base', 'main', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ path: string; branch: string }>()
+    expect(data.branch).toBe('test/first-task')
+    expect(existsSync(data.path)).toBe(true)
+  })
+})
+
+describe('wt create --github', () => {
+  /**
+   * A stand-in for the GitHub CLI. Tests must never touch the network, so the
+   * real `gh` is shadowed by a script on PATH that records its arguments and
+   * reports whatever auth state the test needs.
+   */
+  async function fakeGh(
+    authOutput: string,
+    { exitCode = 0 }: { exitCode?: number } = {},
+  ): Promise<{ binDir: string; logFile: string }> {
+    const binDir = join(sandbox.root, 'fakebin')
+    const logFile = join(sandbox.root, 'gh-calls.log')
+    await mkdir(binDir, { recursive: true })
+    const script = [
+      '#!/bin/sh',
+      'if [ "$1" = "auth" ]; then',
+      `cat <<'AUTH'`,
+      authOutput,
+      'AUTH',
+      `exit ${exitCode}`,
+      'fi',
+      'if [ "$1" = "repo" ] && [ "$2" = "create" ]; then',
+      `  echo "$@" >> "${logFile}"`,
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "repo" ] && [ "$2" = "view" ]; then',
+      `  echo '{"nameWithOwner":"me/thing","url":"https://github.com/me/thing"}'`,
+      '  exit 0',
+      'fi',
+      'exit 1',
+    ].join('\n')
+    await writeFile(join(binDir, 'gh'), `${script}\n`, { mode: 0o755 })
+    return { binDir, logFile }
+  }
+
+  const LOGGED_IN = 'github.com\n  - Active account: true'
+  const BAD_TOKEN =
+    'github.com\n  X Failed to log in to github.com account me (keyring)\n  - The token in keyring is invalid.'
+
+  it('creates the repo on GitHub and reports it', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+
+    const result = await runCli(
+      ['create', 'thing', '--github', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{
+      mainPath: string
+      github: { nameWithOwner: string; url: string } | null
+    }>()
+    expect(data.github).toEqual({
+      nameWithOwner: 'me/thing',
+      url: 'https://github.com/me/thing',
+    })
+
+    // Private by default, wired as origin, pointed at the main checkout.
+    const call = await readFile(logFile, 'utf8')
+    expect(call).toContain('--private')
+    expect(call).toContain('--remote origin')
+    expect(call).toContain(data.mainPath)
+    // Nothing is pushed: a fresh repo has no commits to push.
+    expect(call).not.toContain('--push')
+  })
+
+  it('passes an explicit visibility through', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    await runCli(
+      ['create', 'pubthing', '--github', '--visibility', 'public', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(await readFile(logFile, 'utf8')).toContain('--public')
+  })
+
+  it('rejects an unknown visibility before calling gh', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    const result = await runCli(
+      ['create', 'badvis', '--github', '--visibility', 'hush', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(1)
+    expect(result.json<{ error: { code: string } }>().error.code).toBe(
+      'invalid_visibility',
+    )
+    expect(existsSync(logFile)).toBe(false)
+  })
+
+  it('treats an invalid gh token as unavailable, keeping the local repo', async () => {
+    const { binDir } = await fakeGh(BAD_TOKEN)
+    const result = await runCli(
+      ['create', 'tok', '--github', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(1)
+    const error = result.json<{ error: { code: string; message: string } }>().error
+    expect(error.code).toBe('gh_unavailable')
+    expect(error.message).toContain('invalid or expired')
+
+    // gh failing must not cost the user the local repo.
+    expect(existsSync(join(sandbox.root, 'code', 'tok', 'main', '.git'))).toBe(true)
+    const repos = await runCli(['repos', '--json'], sandbox)
+    const names = repos.json<{ repos: { name: string }[] }>().repos.map((r) => r.name)
+    expect(names).toContain('tok')
+  })
+
+  it('stays silent about GitHub when gh is unusable and none was asked for', async () => {
+    const { binDir } = await fakeGh(BAD_TOKEN)
+    const result = await runCli(
+      ['create', 'quiet', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.json<{ github: unknown }>().github).toBeNull()
+  })
+
+  it('never calls gh with --no-github', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    const result = await runCli(
+      ['create', 'local', '--no-github', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.json<{ github: unknown }>().github).toBeNull()
+    expect(existsSync(logFile)).toBe(false)
+  })
+
+  it('does not prompt for GitHub in non-interactive mode', async () => {
+    const { binDir, logFile } = await fakeGh(LOGGED_IN)
+    // --json implies non-interactive: a prompt here would hang the run.
+    const result = await runCli(
+      ['create', 'unattended', '--no-alias', '--json'],
+      sandbox,
+      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.json<{ github: unknown }>().github).toBeNull()
+    expect(existsSync(logFile)).toBe(false)
+  })
+})
+
+describe('base ports on clone and import', () => {
+  /**
+   * A remote whose worktree.json declares a port layout with a dotenv mapping,
+   * so generated files are observable.
+   */
+  async function seedPortRepo(): Promise<void> {
+    await writeFile(
+      join(sandbox.mainPath, 'worktree.json'),
+      `${JSON.stringify(
+        {
+          ports: {
+            perWorktree: 20,
+            services: { web: { offset: 0, dotenv: { path: '.env', env: 'WEB_PORT' } } },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    await gitIn(['add', '.'], sandbox.mainPath)
+    await gitIn(['commit', '-m', 'add ports'], sandbox.mainPath)
+    await gitIn(['push', 'origin', 'main'], sandbox.mainPath)
+  }
+
+  it('configures a base port when cloning', async () => {
+    await seedPortRepo()
+    const result = await runCli(
+      ['clone', sandbox.remote, 'ported', '--no-alias', '--base-port', '4000', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number; portWarning: string | null; mainPath: string }>()
+    expect(data.basePort).toBe(4000)
+    expect(data.portWarning).toBeNull()
+    // The generated dotenv proves slot assignment ran, not just config writing.
+    expect(await readFile(join(data.mainPath, '.env'), 'utf8')).toContain('WEB_PORT=4000')
+  })
+
+  it('configures a base port when importing', async () => {
+    await seedPortRepo()
+    const path = join(sandbox.root, 'imported')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['import', path, '--restructure', '--no-alias', '--base-port', '5000', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number; portWarning: string | null; mainPath: string }>()
+    expect(data.basePort).toBe(5000)
+    expect(data.portWarning).toBeNull()
+    expect(await readFile(join(data.mainPath, '.env'), 'utf8')).toContain('WEB_PORT=5000')
+  })
+
+  it('warns when a port layout exists but no base port was given', async () => {
+    await seedPortRepo()
+    const path = join(sandbox.root, 'unported')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['import', path, '--no-restructure', '--no-alias', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number | null; portWarning: string | null }>()
+    expect(data.basePort).toBeNull()
+    expect(data.portWarning).toContain('no base port was set')
+  })
+
+  /**
+   * The sandbox root is deliberately realpath'd, so the tests above cannot
+   * reach the symlink case. Port slot assignment compares the path it is given
+   * against `git worktree list` output, which git always reports as a realpath —
+   * so a path reached through a symlink (macOS /tmp, a symlinked home) must be
+   * canonicalised or assignment fails with "not a registered worktree".
+   */
+  it('configures a base port through a symlinked parent directory', async () => {
+    await seedPortRepo()
+    const real = join(sandbox.root, 'realdir')
+    const link = join(sandbox.root, 'linkdir')
+    await mkdir(real, { recursive: true })
+    await symlink(real, link)
+
+    const result = await runCli(
+      ['clone', sandbox.remote, 'symported', '--no-alias', '--base-port', '7000', '--json'],
+      sandbox,
+      { GROVE_DEFAULT_CODE_DIR: link },
+    )
+    expect(result.exitCode).toBe(0)
+    const data = result.json<{ basePort: number; portWarning: string | null; mainPath: string }>()
+    expect(data.basePort).toBe(7000)
+    expect(data.portWarning).toBeNull()
+    expect(await readFile(join(data.mainPath, '.env'), 'utf8')).toContain('WEB_PORT=7000')
+  })
+
+  it('still carries --base-port through the deprecated repos add', async () => {
+    await seedPortRepo()
+    const path = join(sandbox.root, 'legacyported')
+    await gitIn(['clone', sandbox.remote, path], sandbox.root)
+
+    const result = await runCli(
+      ['repos', 'add', path, '--name', 'legacyported', '--base-port', '6000', '--json'],
+      sandbox,
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.json<{ basePort: number }>().basePort).toBe(6000)
   })
 })

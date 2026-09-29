@@ -44,7 +44,7 @@ async function runSync(
     if (names.length === 0) {
       throw new WtError('No repos registered.', {
         code: 'no_repos',
-        hint: 'Use `wt clone <url>` or `wt repos add <path>` first.',
+        hint: 'Use `wt clone <url>` or `wt import <path>` first.',
       })
     }
     if (!options.all && repoArg === undefined && names.length > 1) {

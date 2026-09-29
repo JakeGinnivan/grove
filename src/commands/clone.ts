@@ -18,6 +18,7 @@ import {
   writeRepo,
 } from '../core/registry.js'
 import { repoNameFromUrl } from '../core/naming.js'
+import { canonical } from '../core/paths.js'
 import { git } from '../core/git.js'
 import { optionalText, requireText, select, canPrompt } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, info, warn, getOutputContext } from '../core/output.js'
@@ -112,7 +113,7 @@ async function runClone(
   if (existsSync(cloneTarget)) {
     throw new WtError(`Already exists: ${cloneTarget}`, {
       code: 'clone_target_exists',
-      hint: `Register it instead with \`grove repos add ${repoParent}\`.`,
+      hint: `Register it instead with \`grove import ${repoParent}\`.`,
     })
   }
 
@@ -126,7 +127,12 @@ async function runClone(
     allowFailure: true,
   })
 
-  const portLayout = await readPortLayout(cloneTarget)
+  // Canonicalised because port slot assignment matches this against the paths
+  // `git worktree list` reports, which are realpaths. Without it, a clone under
+  // a symlinked parent (macOS /tmp, a symlinked home) fails with
+  // "not a registered worktree".
+  const portTarget = canonical(cloneTarget)
+  const portLayout = await readPortLayout(portTarget)
   const basePortInput = options.basePort ?? (portLayout && canPrompt()
     ? await requireText(undefined, {
       message: `Base port for ${repoName}`,
@@ -136,11 +142,11 @@ async function runClone(
     })
     : undefined)
   const basePort = basePortInput
-    ? await configureBasePort(cloneTarget, config.reposFile, basePortInput)
+    ? await configureBasePort(portTarget, config.reposFile, basePortInput)
     : null
   if (portLayout && basePort !== null) {
-    const { layout, assignment } = await portsForWorktree(cloneTarget, cloneTarget)
-    await generatePortFiles(cloneTarget, layout, assignment)
+    const { layout, assignment } = await portsForWorktree(portTarget, portTarget)
+    await generatePortFiles(portTarget, layout, assignment)
   }
   const portWarning = portLayout && basePort === null
     ? 'Port layout found, but no base port was set. Run grove port configure --base-port <port>.'

@@ -1,16 +1,11 @@
 import { Command } from 'commander'
 import pc from 'picocolors'
-import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { loadConfig } from '../core/config.js'
 import { readRegistry, gitDirFor, writeRepo, removeRepo } from '../core/registry.js'
-import { emitJson, log, success, getOutputContext } from '../core/output.js'
+import { emitJson, log, success, warn, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
-import { isGitRepo } from '../core/git.js'
-import { resolve } from 'node:path'
-import { configureBasePort, generatePortFiles, portsForWorktree, readPortLayout } from '../core/ports.js'
-import { canPrompt, requireText } from '../core/prompts.js'
-import { warn } from '../core/output.js'
+import { runImport } from './import.js'
 
 export function reposCommand(): Command {
   const command = new Command('repos')
@@ -19,15 +14,32 @@ export function reposCommand(): Command {
       await runRepos()
     })
 
+  // Replaced by `grove import`, which does the same registration and can also
+  // fix a layout that is not <repo>/main. Kept as a forwarding shim so the old
+  // invocation keeps working; slated for removal in v1.
   command
-    .command('add')
-    .description('Register an existing local repo')
+    .command('add', { hidden: true })
+    .description('Deprecated: use `grove import` instead')
     .argument('<path>', 'path to the repo or its worktree parent directory')
     .option('-n, --name <name>', 'name to register (default: directory name)')
     .option('-a, --alias <alias>', 'short alias')
     .option('--base-port <port>', 'local start port for this repo')
     .action(async (path, options) => {
-      await runAdd(path, options)
+      warn('`grove repos add` is deprecated and will be removed in v1.')
+      log(
+        pc.dim(
+          `  Use \`grove import ${path}\` instead${options.name ? ` (name: \`grove import ${path} ${options.name}\`)` : ''}.`,
+        ),
+      )
+      // --no-restructure preserves what `repos add` did: register the repo
+      // exactly as it is. Anyone wanting the layout fixed should call import.
+      await runImport(path, options.name, {
+        restructure: false,
+        deprecationNotice:
+          '`grove repos add` is deprecated and will be removed in v1; use `grove import`.',
+        ...(options.basePort ? { basePort: options.basePort } : {}),
+        ...(options.alias === undefined ? { alias: false } : { alias: options.alias }),
+      })
     })
 
   command
@@ -85,7 +97,7 @@ async function runRepos(): Promise<void> {
 
   if (reports.length === 0) {
     log('No repos registered yet.')
-    log(pc.dim('  Use `wt clone <url>` or `wt repos add <path>`.'))
+    log(pc.dim('  Use `wt clone <url>` or `wt import <path>`.'))
     return
   }
 
@@ -102,68 +114,6 @@ async function runRepos(): Promise<void> {
     }
   }
   log()
-}
-
-async function runAdd(
-  pathArg: string,
-  options: { name?: string; alias?: string; basePort?: string },
-): Promise<void> {
-  const config = await loadConfig()
-  const path = resolve(pathArg)
-
-  if (!existsSync(path)) {
-    throw new WtError(`Path does not exist: ${path}`, { code: 'no_such_path' })
-  }
-
-  // Accept either a worktree parent (containing main/) or a plain clone.
-  const isRepo = await isGitRepo(path)
-  const hasMain = existsSync(join(path, 'main')) && (await isGitRepo(join(path, 'main')))
-  if (!isRepo && !hasMain) {
-    throw new WtError(`Not a git repo: ${path}`, {
-      code: 'not_a_repo',
-      hint: 'Point at a git repo or a directory containing a `main` checkout.',
-    })
-  }
-
-  const name = options.name ?? deriveName(path, isRepo && !hasMain)
-  const mainPath = hasMain ? join(path, 'main') : path
-  const portLayout = await readPortLayout(mainPath)
-  const basePortInput = options.basePort ?? (portLayout && canPrompt()
-    ? await requireText(undefined, {
-      message: `Base port for ${name}`,
-      flag: '--base-port',
-      what: 'A base port',
-      placeholder: '3800',
-    })
-    : undefined)
-  const basePort = basePortInput
-    ? await configureBasePort(mainPath, config.reposFile, basePortInput)
-    : null
-  if (portLayout && basePort !== null) {
-    const { layout, assignment } = await portsForWorktree(mainPath, mainPath)
-    await generatePortFiles(mainPath, layout, assignment)
-  }
-  const portWarning = portLayout && basePort === null
-    ? 'Port layout found, but no base port was set. Run grove port configure --base-port <port>.'
-    : null
-  if (portWarning) warn(portWarning)
-  await writeRepo(config.reposFile, name, path, options.alias)
-
-  if (getOutputContext().json) {
-    emitJson({ ok: true, name, path, alias: options.alias ?? null, basePort, portWarning })
-    return
-  }
-  success(`Registered ${pc.cyan(name)} → ${path}`)
-}
-
-function deriveName(path: string, isPlainClone: boolean): string {
-  const segments = path.split(/[\\/]/).filter(Boolean)
-  const last = segments.at(-1) ?? 'repo'
-  // A plain clone at <parent>/<repo>/main should register as <repo>.
-  if (!isPlainClone && last === 'main' && segments.length > 1) {
-    return segments.at(-2) ?? last
-  }
-  return last
 }
 
 async function runRemove(name: string): Promise<void> {

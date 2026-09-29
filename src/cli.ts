@@ -11,6 +11,8 @@ import { listCommand } from './commands/list.js'
 import { pickCommand } from './commands/pick.js'
 import { reposCommand } from './commands/repos.js'
 import { cloneCommand } from './commands/clone.js'
+import { importCommand } from './commands/import.js'
+import { createCommand } from './commands/create.js'
 import { cleanupCommand } from './commands/cleanup.js'
 import { syncCommand } from './commands/sync.js'
 import { setupCommand } from './commands/setup.js'
@@ -46,6 +48,8 @@ function buildProgram(): Command {
   program.addCommand(cleanupCommand())
   program.addCommand(portCommand())
   program.addCommand(cloneCommand())
+  program.addCommand(importCommand())
+  program.addCommand(createCommand())
   program.addCommand(reposCommand())
   program.addCommand(profileCommand())
   program.addCommand(skillsCommand())

@@ -76,6 +76,8 @@ const COMMANDS: [string, string][] = [
   ['cleanup', 'Remove finished worktrees'],
   ['port', 'Look up and generate worktree ports'],
   ['clone', 'Clone a repo and register it'],
+  ['import', 'Adopt an existing local repo'],
+  ['create', 'Create a new repo and register it'],
   ['repos', 'List registered repos'],
   ['profile', 'Manage clone profiles'],
   ['skills', 'Install agent skills'],
@@ -223,6 +225,26 @@ ${commandLines}
           _arguments \\
             '--profile[profile to clone into]:profile:{_grove_describe_from profiles profiles}' \\
             '(-a --alias)'{-a,--alias}'[short alias]:alias:' \\
+            '--dir[parent directory]:dir:_files -/'
+          ;;
+        import)
+          _arguments \\
+            '1:path:_files -/' \\
+            '(-p --profile)'{-p,--profile}'[profile to move the repo into]:profile:{_grove_describe_from profiles profiles}' \\
+            '(-a --alias)'{-a,--alias}'[short alias]:alias:' \\
+            '--restructure[move the repo into main/]' \\
+            '--no-restructure[register the layout as-is]' \\
+            '--dir[parent directory to move into]:dir:_files -/'
+          ;;
+        create)
+          _arguments \\
+            '(-p --profile)'{-p,--profile}'[profile to create in]:profile:{_grove_describe_from profiles profiles}' \\
+            '(-a --alias)'{-a,--alias}'[short alias]:alias:' \\
+            '(-b --branch)'{-b,--branch}'[initial branch name]:branch:' \\
+            '--github[also create the repo on GitHub]' \\
+            '--no-github[skip the GitHub prompt]' \\
+            '--visibility[GitHub visibility]:visibility:(private public internal)' \\
+            '--owner[GitHub user or org]:owner:' \\
             '--dir[parent directory]:dir:_files -/'
           ;;
         profile)
@@ -427,6 +449,12 @@ complete -c ${name} -n '${repoCondition}' -n 'not __fish_seen_subcommand_from (_
 complete -c ${name} -n '__fish_seen_subcommand_from checkout co' -a '(__grove_complete branches (__grove_repo_arg))'
 complete -c ${name} -n '__fish_seen_subcommand_from pick cd cleanup rm' -a '(__grove_complete worktrees (__grove_repo_arg))'
 complete -c ${name} -n '__fish_seen_subcommand_from clone' -l profile -a '(__grove_complete profiles)' -d 'Profile to clone into'
+complete -c ${name} -n '__fish_seen_subcommand_from import create' -l profile -a '(__grove_complete profiles)' -d 'Profile directory to use'
+complete -c ${name} -n '__fish_seen_subcommand_from import' -l restructure -d 'Move the repo into main/'
+complete -c ${name} -n '__fish_seen_subcommand_from import' -l no-restructure -d 'Register the layout as-is'
+complete -c ${name} -n '__fish_seen_subcommand_from create' -l github -d 'Also create the repo on GitHub'
+complete -c ${name} -n '__fish_seen_subcommand_from create' -l no-github -d 'Skip the GitHub prompt'
+complete -c ${name} -n '__fish_seen_subcommand_from create' -l visibility -a 'private public internal' -d 'GitHub visibility'
 
 complete -c ${name} -n '__fish_seen_subcommand_from profile' -a 'list add remove default apply'
 complete -c ${name} -n '__fish_seen_subcommand_from skills' -a 'install list uninstall'

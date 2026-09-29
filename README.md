@@ -524,7 +524,7 @@ pnpm changeset add --empty
 
 That satisfies the check and adds nothing to the changelog.
 
-On merge to `main`, CI opens a **Version Packages** PR that applies the pending
+On merge to `main`, CI opens a **Publish Release** PR that applies the pending
 changesets — bumping the version and folding them into `CHANGELOG.md`. The
 version PR is the release gate: nothing ships until you merge it.
 

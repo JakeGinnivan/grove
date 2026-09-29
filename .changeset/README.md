@@ -16,7 +16,7 @@ alongside your change.
 Changes that users cannot observe — refactors, test-only edits, CI tweaks —
 need no changeset.
 
-On merge to `main`, CI opens a "Version Packages" PR that applies every pending
+On merge to `main`, CI opens a "Publish Release" PR that applies every pending
 changeset: it bumps the version, folds these files into `CHANGELOG.md`, and
 deletes them. Merging that PR publishes to npm.
 

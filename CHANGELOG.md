@@ -1,5 +1,67 @@
 # @jakeginnivan/grove
 
+## 0.5.0
+
+### Minor Changes
+
+- 677d453: Add `grove import` and `grove create`.
+
+  `grove import <path>` adopts an existing local repo. When the repo is a plain
+  clone rather than the `<repo>/main` layout grove expects, it says so and offers
+  to move the checkout into a `main/` subfolder in place, leaving the repo's own
+  path unchanged. `--restructure` / `--no-restructure` decide without prompting,
+  and `--profile` / `--dir` can also relocate the repo under a profile directory.
+  A repo with linked worktrees is refused rather than silently broken.
+
+  `grove create <name>` starts a new repo at `<profile-dir>/<name>/main` with
+  `git init` on branch `main` and registers it, prompting for the profile when
+  several are configured.
+
+- 385c669: `grove create` can now create the repo on GitHub.
+
+  When the GitHub CLI is installed and logged in, `create` offers to create the
+  repo on GitHub and wire it up as `origin`, asking for visibility (defaulting to
+  private). `--github` / `--no-github` decide without prompting, `--visibility`
+  picks private/public/internal, and `--owner` creates under an org. Nothing is
+  pushed, since a freshly created repo has no commits. A GitHub failure never
+  costs you the local repo, which is created and registered first.
+
+  Set `GROVE_NO_GITHUB=1` to stop grove invoking `gh` at all.
+
+- 385c669: Deprecate `grove repos add` in favour of `grove import`.
+
+  `repos add` now forwards to `grove import --no-restructure`, which registers
+  the repo exactly as it did before, and prints a deprecation warning (carried in
+  the `deprecated` field under `--json`). It is hidden from help and will be
+  removed in v1. Use `grove import` instead, which can also fix a layout that is
+  not `<repo>/main`.
+
+- 0103461: The `cleanup` picker now groups worktrees into Merged, Clean (not merged) and
+  Uncommitted changes, preselects the merged ones, and shows each worktree's
+  status on every row instead of only the highlighted one.
+
+### Patch Changes
+
+- 403d43b: Fix base-port configuration failing under a symlinked path.
+
+  `grove clone --base-port` aborted with "Current directory is not a registered
+  worktree" whenever the clone target was reached through a symlink — which
+  includes macOS `/tmp` and any symlinked home. Port slot assignment compares the
+  path against `git worktree list`, which git always reports as a realpath, so the
+  paths never matched. `clone` and `import` now canonicalise before assigning.
+
+- 80f0934: Create the GitHub release again when a version is staged. The move from GitHub
+  Actions to Buildkite dropped `changesets/action`, which had been creating them,
+  so v0.3.2 shipped with a tag but no release. The release body is the version's
+  CHANGELOG.md section plus the `npm stage approve` command for that stage id, so
+  merging the version PR delivers everything needed to finish the release.
+- d5dced4: The release PR is now titled "Publish Release" and lists the changelog entries
+  it will ship. Later builds keep the title and body of an open release PR up to date.
+- c8587b9: Run the changeset check through a vendored copy of the changesets Buildkite
+  plugin, so the extracted plugin is proven on a real build before it is tagged.
+  The duplicate `changeset-check.sh` and `is-version-pr.sh` are removed, leaving
+  one copy of that logic rather than two that can drift.
+
 ## 0.4.0
 
 ### Minor Changes

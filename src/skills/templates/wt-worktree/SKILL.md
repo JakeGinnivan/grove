@@ -58,6 +58,9 @@ Creates a branch from the latest default branch and a matching directory:
 
 Use `path` as the working directory for all subsequent edits.
 
+`grove new` fetches first, so `base` is the up-to-date remote branch. Compare
+and rebase against `origin/main`, not local `main`, which is often behind.
+
 Useful flags:
 
 - `--jira ABC-123` — include a ticket key in the branch and directory names.

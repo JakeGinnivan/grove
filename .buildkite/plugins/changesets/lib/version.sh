@@ -45,21 +45,40 @@ git commit -m "chore: version packages"
 git push --force "$PUSH_URL" "$BRANCH" 2>/dev/null ||
   { echo "Push of $BRANCH failed (output suppressed: it contains the token)"; exit 1; }
 
-# The head filter needs the owner prefix, and REPO is already owner/name.
-OPEN_PRS="$(github_api "https://api.github.com/repos/${REPO}/pulls?state=open&head=${REPO%%/*}:${BRANCH}" |
-  node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).length))')"
+TITLE="Publish Release"
+VERSION="$(node -p 'require("./package.json").version')"
 
-if [[ "$OPEN_PRS" -gt 0 ]]; then
-  echo "Version PR already open; the force-push updated it."
+if [[ "${BUILDKITE_PLUGIN_CHANGESETS_PUBLISH:-publish}" == "stage" ]]; then
+  MERGE_NOTE="Merging this stages \`${VERSION}\` on npm for approval."
 else
-  # node builds the JSON so the title and body are escaped properly rather than
-  # interpolated into a string that a quote in a changeset could break.
-  github_api -X POST "https://api.github.com/repos/${REPO}/pulls" \
-    -d "$(node -e 'console.log(JSON.stringify({
-      title: "chore: version packages",
-      head: process.argv[1],
-      base: process.argv[2],
-      body: "Automated version bump from changesets. Merging this releases the versions listed above.",
-    }))' "$BRANCH" "$BUILDKITE_BRANCH")" >/dev/null
+  MERGE_NOTE="Merging this publishes \`${VERSION}\` to npm."
+fi
+
+# The body is the same changelog section the GitHub release will carry, so the
+# PR shows exactly what is about to ship.
+if ENTRY="$(node "$HERE/changelog-entry.mjs" "$VERSION")"; then
+  BODY="$(printf '%s\n\n## %s\n\n%s' "$MERGE_NOTE" "$VERSION" "$ENTRY")"
+else
+  BODY="$MERGE_NOTE"
+fi
+
+# node builds the JSON so the title and body are escaped properly rather than
+# interpolated into a string that a quote in a changeset could break.
+pr_json() {
+  node -e 'const [title, body, base, head] = process.argv.slice(1)
+    console.log(JSON.stringify({ title, body, base, ...(head && { head }) }))' "$TITLE" "$BODY" "$BUILDKITE_BRANCH" "$@"
+}
+
+# The head filter needs the owner prefix, and REPO is already owner/name.
+OPEN_PR="$(github_api "https://api.github.com/repos/${REPO}/pulls?state=open&head=${REPO%%/*}:${BRANCH}" |
+  node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s)[0]?.number ?? ""))')"
+
+if [[ -n "$OPEN_PR" ]]; then
+  # The force-push updated the commits; the title and body still describe the
+  # previous set of changesets until they are rewritten too.
+  github_api -X PATCH "https://api.github.com/repos/${REPO}/pulls/${OPEN_PR}" -d "$(pr_json)" >/dev/null
+  echo "Updated version PR #${OPEN_PR}."
+else
+  github_api -X POST "https://api.github.com/repos/${REPO}/pulls" -d "$(pr_json "$BRANCH")" >/dev/null
   echo "Opened version PR for $BRANCH."
 fi

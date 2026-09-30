@@ -1,7 +1,6 @@
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolve, basename, dirname } from 'node:path'
-import { styleText } from 'node:util'
 import { canonical, samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
@@ -10,7 +9,7 @@ import { canTrash, moveToTrash } from '../core/trash.js'
 import { groupMultiselect, confirm } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
-import { pickRepo } from './shared.js'
+import { pickRepo, statusLabel } from './shared.js'
 import { gatherWorktrees, type WorktreeReport } from './list.js'
 
 export function cleanupCommand(): Command {
@@ -34,7 +33,7 @@ export function cleanupCommand(): Command {
     })
 }
 
-interface CleanupOptions {
+export interface CleanupOptions {
   merged?: boolean
   force?: boolean
   yes?: boolean
@@ -52,7 +51,7 @@ interface RemovalOutcome {
   skipped: string | null
 }
 
-async function runCleanup(
+export async function runCleanup(
   repoArg: string | undefined,
   worktreeArgs: string[],
   options: CleanupOptions,
@@ -112,7 +111,7 @@ async function runCleanup(
           `${group.title} (${group.reports.length})`,
           group.reports.map((report) => ({
             value: report.path,
-            label: pickerLabel(report, width),
+            label: statusLabel(report, width),
           })),
         ]),
       ),
@@ -229,26 +228,6 @@ export function groupCandidates(reports: WorktreeReport[]): CandidateGroup[] {
     else clean.reports.push(report)
   }
   return groups.filter((group) => group.reports.length > 0)
-}
-
-/**
- * clack only shows an option's hint on the row under the cursor, so status
- * goes in the label itself to be scannable down the whole list. Styled
- * against stderr because that is where prompts render; stdout is often the
- * shell wrapper's pipe and would report no colour support.
- */
-function pickerLabel(report: WorktreeReport, width: number): string {
-  const paint = (format: Parameters<typeof styleText>[0], text: string) =>
-    styleText(format, text, { stream: process.stderr })
-  const tags: string[] = [
-    report.dirty
-      ? paint('yellow', '● uncommitted changes')
-      : paint('green', '○ clean'),
-  ]
-  if (report.merged) tags.push(paint('green', '✔ merged'))
-  if (report.ahead > 0) tags.push(paint('yellow', `${report.ahead} unpushed`))
-  if (!report.upstream && !report.merged) tags.push(paint('gray', 'no upstream'))
-  return `${report.dir.padEnd(width)}  ${tags.join('  ')}`
 }
 
 async function removeOne(

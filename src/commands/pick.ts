@@ -3,11 +3,15 @@ import { samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
 import { listWorktrees } from '../core/git.js'
-import { byRecency } from '../core/worktree.js'
 import { select } from '../core/prompts.js'
 import { emitJson, emitCd, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
-import { pickRepo, worktreeLabel, worktreeHint } from './shared.js'
+import { pickRepo, worktreeLabel, statusLabel } from './shared.js'
+import { gatherWorktrees } from './list.js'
+import { runCleanup } from './cleanup.js'
+
+/** Picker value for the cleanup entry. No path can contain NUL. */
+const CLEANUP = '\0cleanup'
 
 export function pickCommand(): Command {
   return new Command('pick')
@@ -72,15 +76,21 @@ async function runPick(
       chosen = match.path
     }
   } else {
-    chosen = await select(
-      `Worktree in ${repo.name}`,
-      (await byRecency(gitDir, worktrees)).map((wt) => ({
-        value: wt.path,
-        label: worktreeLabel(wt),
-        hint: worktreeHint(wt),
-      })),
-      'A worktree',
-    )
+    const reports = await gatherWorktrees(gitDir, true)
+    const width = Math.max(...reports.map((report) => report.dir.length))
+    const options = reports.map((report) => ({
+      value: report.path,
+      label: statusLabel(report, width),
+      hint: report.branch ?? 'detached',
+    }))
+    if (reports.length > 1) {
+      options.push({ value: CLEANUP, label: 'Clean up worktrees…', hint: 'grove cleanup' })
+    }
+    chosen = await select(`Worktree in ${repo.name}`, options, 'A worktree')
+    if (chosen === CLEANUP) {
+      await runCleanup(repo.name, [], { trash: true })
+      return
+    }
   }
 
   if (getOutputContext().json) {

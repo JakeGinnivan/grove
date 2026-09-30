@@ -216,7 +216,16 @@ export async function runCliWithTty(
   args: string[],
   sandbox: Sandbox,
   extraEnv: NodeJS.ProcessEnv = {},
-  { answerWhen, timeoutMs = 15_000 }: { answerWhen: string | RegExp; timeoutMs?: number },
+  {
+    answerWhen,
+    keys = '\r',
+    timeoutMs = 15_000,
+  }: {
+    answerWhen: string | RegExp
+    /** Sent once `answerWhen` appears. Defaults to Enter. */
+    keys?: string
+    timeoutMs?: number
+  },
 ): Promise<RunResult> {
   // A loader that flips isTTY before handing off to the real bundle. argv[1]
   // is rewritten so the CLI's own argv parsing lines up as if run directly.
@@ -271,7 +280,7 @@ export async function runCliWithTty(
       answered = true
       // End stdin after the answer: clack puts the pipe in raw mode and keeps
       // it open, which holds the child's event loop open after it has finished.
-      child.stdin.end('\r')
+      child.stdin.end(keys)
     }
   })
 

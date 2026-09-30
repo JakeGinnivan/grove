@@ -1449,6 +1449,38 @@ describe('wt pick', () => {
     )
   })
 
+  it('shows each worktree\'s status in the picker', async () => {
+    const created = await runCli(['new', 'demo', '--title', 'messy work', '--json'], sandbox)
+    await writeFile(join(created.json<{ path: string }>().path, 'scratch.txt'), 'wip\n')
+
+    const result = await runCliWithTty(
+      ['pick', 'demo'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Clean up worktrees' },
+    )
+
+    expect(result.stderr).toMatch(/messy-work\s+● uncommitted changes/)
+    // Main counts as merged into its own upstream, which says nothing useful.
+    expect(result.stderr).not.toMatch(/main\s+○ clean\s+✔ merged/)
+    expect(result.exitCode).toBe(0)
+  }, 30_000)
+
+  it('hands over to cleanup from the picker', async () => {
+    await runCli(['new', 'demo', '--title', 'finished work', '--json'], sandbox)
+
+    // Up from the first row wraps to the cleanup entry at the bottom.
+    const result = await runCliWithTty(
+      ['pick', 'demo'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Clean up worktrees', keys: '\x1b[A\r' },
+    )
+
+    expect(result.stderr).toContain('Select worktrees to remove')
+    expect(result.stdout).not.toContain('__WT_CD__')
+  }, 30_000)
+
   it('jumps to main with --main', async () => {
     const result = await runCli(['pick', 'demo', '--main', '--json'], sandbox)
     expect(result.json<{ path: string }>().path).toBe(sandbox.mainPath)

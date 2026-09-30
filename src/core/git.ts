@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { normalize } from 'node:path'
+import { normalize, join, dirname } from 'node:path'
+import { mkdir } from 'node:fs/promises'
 import { WtError } from './errors.js'
 
 const execFileAsync = promisify(execFile)
@@ -232,15 +233,31 @@ export async function isDirty(dir: string): Promise<boolean> {
 }
 
 export async function upstreamOf(dir: string): Promise<string | undefined> {
-  const { stdout, exitCode } = await git(
-    ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
-    { cwd: dir, allowFailure: true },
-  )
-  // When the remote branch is gone (deleted on merge, then pruned) git exits
-  // non-zero but still echoes the literal "@{u}" on stdout. Trusting stdout
-  // alone hands that back as if it were a real ref name.
-  if (exitCode !== 0) return undefined
-  return stdout || undefined
+  // A configured upstream first. Without one, where `git push` would send
+  // the branch (`@{push}`), then a same-named branch on origin: pushing from
+  // the sandbox cannot record an upstream, because that means writing
+  // `.git/config`, but the branch is still pushed.
+  for (const rev of ['@{u}', '@{push}']) {
+    const { stdout, exitCode } = await git(
+      ['rev-parse', '--abbrev-ref', '--symbolic-full-name', rev],
+      { cwd: dir, allowFailure: true },
+    )
+    // When the remote branch is gone (deleted on merge, then pruned) git
+    // exits non-zero but still echoes the literal rev on stdout. Trusting
+    // stdout alone hands that back as if it were a real ref name.
+    if (exitCode === 0 && stdout) return stdout
+  }
+  const branch = await git(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+    cwd: dir,
+    allowFailure: true,
+  })
+  if (branch.exitCode !== 0 || !branch.stdout) return undefined
+  const remote = `origin/${branch.stdout}`
+  const exists = await git(['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}`], {
+    cwd: dir,
+    allowFailure: true,
+  })
+  return exists.exitCode === 0 ? remote : undefined
 }
 
 /** Number of commits in `dir` HEAD that are not in `upstream`. */
@@ -306,11 +323,34 @@ export async function behindOnMainline(
   return Number.parseInt(count.stdout, 10)
 }
 
-/** Read a git config value, or undefined when unset. */
+/**
+ * grove keeps its own state in a config file of its own inside the git dir,
+ * not in `.git/config`: Claude Code's sandbox never lets a command write the
+ * repo's config (it could point git at hooks that run outside the sandbox),
+ * so state kept there broke every sandboxed `grove new --on` and port
+ * assignment. The file is shared by all worktrees, like the git dir itself.
+ */
+async function groveConfigFile(gitDir: string): Promise<string> {
+  const { stdout } = await git(
+    ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+    { cwd: gitDir },
+  )
+  return join(stdout, 'grove', 'config')
+}
+
+/**
+ * Read a grove setting. Falls back to the repo's git config, which is where
+ * older grove versions wrote it and where a user may still set it by hand.
+ */
 export async function getConfig(
   gitDir: string,
   key: string,
 ): Promise<string | undefined> {
+  const own = await git(['config', '--file', await groveConfigFile(gitDir), '--get', key], {
+    cwd: gitDir,
+    allowFailure: true,
+  })
+  if (own.stdout) return own.stdout
   const { stdout } = await git(['config', '--get', key], {
     cwd: gitDir,
     allowFailure: true,
@@ -318,12 +358,22 @@ export async function getConfig(
   return stdout || undefined
 }
 
+/** Drop a whole section, such as a deleted branch's, from grove's config. */
+export async function removeConfigSection(gitDir: string, section: string): Promise<void> {
+  await git(['config', '--file', await groveConfigFile(gitDir), '--remove-section', section], {
+    cwd: gitDir,
+    allowFailure: true,
+  })
+}
+
 export async function setConfig(
   gitDir: string,
   key: string,
   value: string,
 ): Promise<void> {
-  await git(['config', key, value], { cwd: gitDir })
+  const file = await groveConfigFile(gitDir)
+  await mkdir(dirname(file), { recursive: true })
+  await git(['config', '--file', file, key, value], { cwd: gitDir })
 }
 
 /** True when this git supports `worktree remove --keep`. */

@@ -4,7 +4,7 @@ import { resolve, basename, dirname } from 'node:path'
 import { samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
-import { git, listWorktrees, localBranchExists } from '../core/git.js'
+import { git, listWorktrees, localBranchExists, removeConfigSection } from '../core/git.js'
 import { canTrash, moveToTrash } from '../core/trash.js'
 import { groupMultiselect, multiselect, confirm } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
@@ -305,6 +305,9 @@ async function deleteBranchIfRequested(
     allowFailure: true,
   })
   outcome.branchDeleted = del.exitCode === 0
+  if (outcome.branchDeleted) {
+    await removeConfigSection(gitDir, `branch.${report.branch}`)
+  }
 }
 
 /** True when git has the worktree marked as locked. */

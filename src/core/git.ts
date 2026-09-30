@@ -146,6 +146,28 @@ export async function listWorktrees(gitDir: string): Promise<Worktree[]> {
 }
 
 /**
+ * Committer time (unix seconds) of each commit, keyed by full sha. Unknown
+ * or unborn heads are simply absent from the result.
+ */
+export async function commitTimes(
+  gitDir: string,
+  shas: string[],
+): Promise<Map<string, number>> {
+  const unique = [...new Set(shas)].filter((sha) => !/^0+$/.test(sha))
+  const times = new Map<string, number>()
+  if (unique.length === 0) return times
+  const { stdout } = await git(['show', '-s', '--format=%H %ct', ...unique], {
+    cwd: gitDir,
+    allowFailure: true,
+  })
+  for (const line of stdout.split('\n')) {
+    const [sha, time] = line.split(' ')
+    if (sha && time) times.set(sha, Number(time))
+  }
+  return times
+}
+
+/**
  * Detect the default remote branch, e.g. `origin/main`.
  * Tries origin/HEAD, then falls back to probing common names.
  */

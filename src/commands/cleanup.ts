@@ -1,19 +1,31 @@
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolve, basename, dirname } from 'node:path'
-import { canonical, samePath } from '../core/paths.js'
+import { samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
 import { git, listWorktrees, localBranchExists } from '../core/git.js'
 import { canTrash, moveToTrash } from '../core/trash.js'
-import { groupMultiselect, confirm } from '../core/prompts.js'
+import { groupMultiselect, multiselect, confirm } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
-import { pickRepo, statusLabel } from './shared.js'
-import { gatherWorktrees, type WorktreeReport } from './list.js'
+import { pickRepo, withViewOptions } from './shared.js'
+import {
+  loadWorktrees,
+  arrange,
+  flatten,
+  rowLabel,
+  rowWidths,
+  describeStatus,
+  isSafeToRemove,
+  matchWorktree,
+  type ViewOptions,
+  type WorktreeReport,
+} from '../core/worktree-view.js'
 
 export function cleanupCommand(): Command {
-  return new Command('cleanup')
+  return withViewOptions(
+    new Command('cleanup')
     .alias('rm')
     .description('Remove finished worktrees')
     .argument('[repo]', 'registered repo name, or "self" for the current one')
@@ -23,17 +35,18 @@ export function cleanupCommand(): Command {
     .option('-y, --yes', 'skip confirmation prompts')
     .option('--delete-branch', 'also delete the local branch')
     .option('--no-trash', 'delete permanently instead of moving to trash')
-    .option('--dry-run', 'show what would be removed without removing it')
-    .action(async (repoArg, worktreeArgs, options) => {
-      if (repoArg === 'self') {
-        await runCleanupSelf(options)
-        return
-      }
-      await runCleanup(repoArg, worktreeArgs ?? [], options)
-    })
+    .option('--dry-run', 'show what would be removed without removing it'),
+    { sort: 'recent', group: 'status' },
+  ).action(async (repoArg, worktreeArgs, options) => {
+    if (repoArg === 'self') {
+      await runCleanupSelf(options)
+      return
+    }
+    await runCleanup(repoArg, worktreeArgs ?? [], options)
+  })
 }
 
-export interface CleanupOptions {
+export interface CleanupOptions extends ViewOptions {
   merged?: boolean
   force?: boolean
   yes?: boolean
@@ -61,9 +74,8 @@ export async function runCleanup(
   const repo = await resolveRepo(config.reposFile, repoName)
   const gitDir = await gitDirFor(repo.path)
 
-  const all = await gatherWorktrees(gitDir, true)
-  const primary = canonical(gitDir)
-  const candidates = all.filter((report) => canonical(report.path) !== primary)
+  const arranged = arrange(await loadWorktrees(gitDir, { status: true }), options)
+  const candidates = flatten({ main: undefined, groups: arranged.groups })
 
   if (candidates.length === 0) {
     if (getOutputContext().json) {
@@ -76,23 +88,12 @@ export async function runCleanup(
 
   let selected: WorktreeReport[]
   if (worktreeArgs.length > 0) {
-    selected = worktreeArgs.map((arg) => {
-      const match = candidates.find(
-        (report) =>
-          report.dir === arg ||
-          report.branch === arg ||
-          samePath(report.path, arg),
-      )
-      if (!match) {
-        throw new WtError(`No worktree matching "${arg}".`, {
-          code: 'no_matching_worktree',
-          hint: `Available: ${candidates.map((c) => c.dir).join(', ')}`,
-        })
-      }
-      return match
-    })
+    // Exact matches only: a substring could remove the wrong worktree.
+    selected = worktreeArgs.map((arg) =>
+      matchWorktree(candidates, arg, { partial: false }),
+    )
   } else if (options.merged) {
-    selected = candidates.filter((report) => report.merged && !report.dirty)
+    selected = candidates.filter(isSafeToRemove)
     if (selected.length === 0) {
       if (getOutputContext().json) {
         emitJson({ ok: true, repo: repo.name, removed: [] })
@@ -102,24 +103,32 @@ export async function runCleanup(
       return
     }
   } else {
-    const groups = groupCandidates(candidates)
-    const width = Math.max(...candidates.map((report) => report.dir.length))
-    const chosen = await groupMultiselect(
-      'Select worktrees to remove',
-      Object.fromEntries(
-        groups.map((group) => [
-          `${group.title} (${group.reports.length})`,
-          group.reports.map((report) => ({
-            value: report.path,
-            label: statusLabel(report, width),
-          })),
-        ]),
-      ),
-      'Worktree names',
-      groups
-        .filter((group) => group.preselect)
-        .flatMap((group) => group.reports.map((report) => report.path)),
-    )
+    const widths = rowWidths(candidates, { status: true })
+    const option = (report: WorktreeReport) => ({
+      value: report.path,
+      label: rowLabel(report, widths).trimEnd(),
+    })
+    const preselected = candidates.filter(isSafeToRemove).map((report) => report.path)
+    const [ungrouped] = arranged.groups
+    const chosen =
+      ungrouped && !ungrouped.title
+        ? await multiselect(
+            'Select worktrees to remove',
+            ungrouped.reports.map(option),
+            'Worktree names',
+            preselected,
+          )
+        : await groupMultiselect(
+            'Select worktrees to remove',
+            Object.fromEntries(
+              arranged.groups.map((group) => [
+                `${group.title} (${group.reports.length})`,
+                group.reports.map(option),
+              ]),
+            ),
+            'Worktree names',
+            preselected,
+          )
     selected = candidates.filter((report) => chosen.includes(report.path))
   }
 
@@ -146,7 +155,7 @@ export async function runCleanup(
     log()
     log(pc.bold('Would remove:'))
     for (const report of selected) {
-      log(`  ${report.dir}  ${pc.dim(describeFlags(report) || 'clean')}`)
+      log(`  ${report.dir}  ${pc.dim(describeStatus(report))}`)
     }
     log()
     return
@@ -193,41 +202,6 @@ export async function runCleanup(
     }
   }
   log()
-}
-
-function describeFlags(report: WorktreeReport): string {
-  const flags: string[] = []
-  if (report.dirty) flags.push('dirty')
-  if (report.ahead > 0) flags.push(`${report.ahead} unpushed`)
-  if (report.merged) flags.push('merged')
-  if (!report.upstream && !report.merged) flags.push('no upstream')
-  return flags.join(', ')
-}
-
-export interface CandidateGroup {
-  title: string
-  reports: WorktreeReport[]
-  preselect: boolean
-}
-
-/**
- * Bucket worktrees by how safe they are to remove. Merged-and-clean ones are
- * preselected because removing them loses nothing; anything with local
- * changes lands last so it is never picked by accident.
- */
-export function groupCandidates(reports: WorktreeReport[]): CandidateGroup[] {
-  const groups: CandidateGroup[] = [
-    { title: 'Merged', reports: [], preselect: true },
-    { title: 'Clean, not merged', reports: [], preselect: false },
-    { title: 'Uncommitted changes', reports: [], preselect: false },
-  ]
-  const [merged, clean, dirty] = groups as [CandidateGroup, CandidateGroup, CandidateGroup]
-  for (const report of reports) {
-    if (report.dirty) dirty.reports.push(report)
-    else if (report.merged) merged.reports.push(report)
-    else clean.reports.push(report)
-  }
-  return groups.filter((group) => group.reports.length > 0)
 }
 
 async function removeOne(
@@ -364,7 +338,7 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
     })
   }
 
-  const reports = await gatherWorktrees(gitRoot, true)
+  const reports = await loadWorktrees(gitRoot, { status: true })
   const report = reports.find((candidate) =>
     samePath(candidate.path, worktreePath),
   )
@@ -379,7 +353,7 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
       emitJson({ ok: true, dryRun: true, wouldRemove: [report] })
       return
     }
-    log(`Would remove ${report.dir} ${pc.dim(describeFlags(report))}`)
+    log(`Would remove ${report.dir} ${pc.dim(describeStatus(report))}`)
     return
   }
 

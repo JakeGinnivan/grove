@@ -190,7 +190,15 @@ Stacked branches have no upstream until you push; use `git push -u origin HEAD`.
 wt pick my-service            # interactive picker
 wt pick my-service fix-login  # jump by substring
 wt pick my-service --main     # jump to the main checkout
+wt list my-service            # print them all
 ```
+
+`list`, `pick` and `cleanup` show worktrees the same way: main on top, then the
+rest newest commit first, each with its status (uncommitted changes, merged,
+pushed or not). The picker ends with a "Clean up worktrees…" entry. All three
+take `--sort recent|name` and `--group status|none`; `cleanup` groups by status
+by default, the others do not. `list --no-status` skips the git checks when
+you only need names.
 
 ### Keep main current
 

@@ -277,6 +277,35 @@ export async function isMergedInto(
   return exitCode === 0
 }
 
+/**
+ * How many commits `base` is ahead of `sha` when `sha` sits on `base`'s own
+ * first-parent line, meaning the branch never gained commits of its own
+ * (0 when they are the same commit). Undefined when the branch has its own
+ * commits, merged or not. Only meaningful once `sha` is known to be an
+ * ancestor of `base`: a `sha` ahead of `base` also yields an empty range.
+ *
+ * Walking base's first parents stops at the first commit `sha` can reach. For
+ * a mainline commit that is `sha` itself; for a branch merged in through a
+ * merge commit it is the older merge base, so the two cases come apart.
+ */
+export async function behindOnMainline(
+  gitDir: string,
+  sha: string,
+  base: string,
+): Promise<number | undefined> {
+  const { stdout, exitCode } = await git(
+    ['rev-list', '--first-parent', '--parents', `${sha}..${base}`],
+    { cwd: gitDir, allowFailure: true },
+  )
+  if (exitCode !== 0) return undefined
+  if (!stdout) return 0
+  const firstParent = stdout.split('\n').at(-1)!.split(' ')[1]
+  if (firstParent !== sha) return undefined
+  // Count every commit, as `git status` does, not just the first-parent walk.
+  const count = await git(['rev-list', '--count', `${sha}..${base}`], { cwd: gitDir })
+  return Number.parseInt(count.stdout, 10)
+}
+
 /** Read a git config value, or undefined when unset. */
 export async function getConfig(
   gitDir: string,

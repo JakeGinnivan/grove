@@ -1,10 +1,8 @@
 import { readRegistry } from '../core/registry.js'
 import { select } from '../core/prompts.js'
 import { WtError } from '../core/errors.js'
-import { basename } from 'node:path'
-import { styleText } from 'node:util'
-import type { Worktree } from '../core/git.js'
-import type { WorktreeReport } from './list.js'
+import { Command, Option } from 'commander'
+import type { ViewOptions } from '../core/worktree-view.js'
 
 /**
  * Resolve the repo argument, prompting when omitted. Errors clearly in
@@ -37,29 +35,17 @@ export async function pickRepo(
   )
 }
 
-/** Label a worktree for display in a picker. */
-export function worktreeLabel(worktree: Worktree): string {
-  return basename(worktree.path)
-}
-
-/**
- * clack only shows an option's hint on the row under the cursor, so status
- * goes in the label itself to be scannable down the whole list. Styled
- * against stderr because that is where prompts render; stdout is often the
- * shell wrapper's pipe and would report no colour support.
- */
-export function statusLabel(report: WorktreeReport, width: number): string {
-  const paint = (format: Parameters<typeof styleText>[0], text: string) =>
-    styleText(format, text, { stream: process.stderr })
-  // The main checkout always counts as merged into its own upstream.
-  const merged = report.merged && !report.isMain
-  const tags: string[] = [
-    report.dirty
-      ? paint('yellow', '● uncommitted changes')
-      : paint('green', '○ clean'),
-  ]
-  if (merged) tags.push(paint('green', '✔ merged'))
-  if (report.ahead > 0) tags.push(paint('yellow', `${report.ahead} unpushed`))
-  if (!report.upstream && !merged) tags.push(paint('gray', 'no upstream'))
-  return `${report.dir.padEnd(width)}  ${tags.join('  ')}`
+/** The `--sort` and `--group` flags every worktree view shares. */
+export function withViewOptions(command: Command, defaults: ViewOptions): Command {
+  return command
+    .addOption(
+      new Option('--sort <order>', 'order within each group')
+        .choices(['recent', 'name'])
+        .default(defaults.sort),
+    )
+    .addOption(
+      new Option('--group <by>', 'group by status, or not at all')
+        .choices(['status', 'none'])
+        .default(defaults.group),
+    )
 }

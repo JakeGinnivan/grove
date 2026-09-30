@@ -1,112 +1,89 @@
 import { Command } from 'commander'
-import { samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
-import { listWorktrees } from '../core/git.js'
 import { select } from '../core/prompts.js'
 import { emitJson, emitCd, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
-import { pickRepo, worktreeLabel, statusLabel } from './shared.js'
-import { gatherWorktrees } from './list.js'
+import {
+  loadWorktrees,
+  arrange,
+  flatten,
+  rowLabel,
+  rowWidths,
+  matchWorktree,
+  type ViewOptions,
+  type WorktreeReport,
+} from '../core/worktree-view.js'
+import { pickRepo, withViewOptions } from './shared.js'
 import { runCleanup } from './cleanup.js'
 
 /** Picker value for the cleanup entry. No path can contain NUL. */
 const CLEANUP = '\0cleanup'
 
 export function pickCommand(): Command {
-  return new Command('pick')
-    .alias('cd')
-    .description('Select a worktree and cd into it')
-    .argument('[repo]', 'registered repo name or alias')
-    .argument('[query]', 'directory or branch to match; skips the picker')
-    .option('--main', 'jump straight to the main worktree')
-    .option('--path-only', 'print the path without the cd sentinel')
-    .action(async (repoArg, queryArg, options) => {
-      await runPick(repoArg, queryArg, options)
-    })
+  return withViewOptions(
+    new Command('pick')
+      .alias('cd')
+      .description('Select a worktree and cd into it')
+      .argument('[repo]', 'registered repo name or alias')
+      .argument('[query]', 'directory or branch to match; skips the picker')
+      .option('--main', 'jump straight to the main worktree')
+      .option('--path-only', 'print the path without the cd sentinel'),
+    { sort: 'recent', group: 'none' },
+  ).action(async (repoArg, queryArg, options) => {
+    await runPick(repoArg, queryArg, options)
+  })
 }
 
 async function runPick(
   repoArg: string | undefined,
   queryArg: string | undefined,
-  options: { main?: boolean; pathOnly?: boolean },
+  options: ViewOptions & { main?: boolean; pathOnly?: boolean },
 ): Promise<void> {
   const config = await loadConfig()
   const repoName = await pickRepo(config.reposFile, repoArg)
   const repo = await resolveRepo(config.reposFile, repoName)
   const gitDir = await gitDirFor(repo.path)
-  const worktrees = await listWorktrees(gitDir)
+  const interactive = !options.main && !queryArg
+  // Status is only shown in the picker, so skip its cost otherwise.
+  const reports = await loadWorktrees(gitDir, { status: interactive })
 
-  if (worktrees.length === 0) {
+  if (reports.length === 0) {
     throw new WtError('No worktrees found.', { code: 'no_worktrees' })
   }
 
-  let chosen: string
+  let chosen: WorktreeReport
   if (options.main) {
-    // Prefer git's own record so the reported path and branch stay
-    // consistent with every other command.
-    chosen = worktrees.find((wt) => samePath(wt.path, gitDir))?.path ?? gitDir
+    chosen = reports.find((report) => report.isMain)!
   } else if (queryArg) {
-    const match = worktrees.find(
-      (wt) =>
-        worktreeLabel(wt) === queryArg ||
-        wt.branch === queryArg ||
-        samePath(wt.path, queryArg),
-    )
-    if (!match) {
-      // Fall back to a unique substring match before giving up.
-      const partial = worktrees.filter(
-        (wt) =>
-          worktreeLabel(wt).includes(queryArg) ||
-          (wt.branch?.includes(queryArg) ?? false),
-      )
-      if (partial.length === 1) {
-        chosen = partial[0]!.path
-      } else if (partial.length > 1) {
-        throw new WtError(`"${queryArg}" matches ${partial.length} worktrees.`, {
-          code: 'ambiguous_worktree',
-          hint: `Matches: ${partial.map(worktreeLabel).join(', ')}`,
-        })
-      } else {
-        throw new WtError(`No worktree matching "${queryArg}".`, {
-          code: 'no_matching_worktree',
-        })
-      }
-    } else {
-      chosen = match.path
-    }
+    chosen = matchWorktree(reports, queryArg, { partial: true })
   } else {
-    const reports = await gatherWorktrees(gitDir, true)
-    const width = Math.max(...reports.map((report) => report.dir.length))
-    const options = reports.map((report) => ({
+    const all = flatten(arrange(reports, options))
+    const widths = rowWidths(all, { status: true })
+    const choices = all.map((report) => ({
       value: report.path,
-      label: statusLabel(report, width),
+      label: rowLabel(report, widths),
       hint: report.branch ?? 'detached',
     }))
-    if (reports.length > 1) {
-      options.push({ value: CLEANUP, label: 'Clean up worktrees…', hint: 'grove cleanup' })
+    if (all.length > 1) {
+      choices.push({ value: CLEANUP, label: 'Clean up worktrees…', hint: 'grove cleanup' })
     }
-    chosen = await select(`Worktree in ${repo.name}`, options, 'A worktree')
-    if (chosen === CLEANUP) {
-      await runCleanup(repo.name, [], { trash: true })
+    const path = await select(`Worktree in ${repo.name}`, choices, 'A worktree')
+    if (path === CLEANUP) {
+      await runCleanup(repo.name, [], { trash: true, sort: options.sort, group: 'status' })
       return
     }
+    chosen = all.find((report) => report.path === path)!
   }
 
   if (getOutputContext().json) {
-    const match = worktrees.find((wt) => samePath(wt.path, chosen))
-    emitJson({
-      ok: true,
-      repo: repo.name,
-      path: chosen,
-      branch: match?.branch ?? null,
-    })
+    emitJson({ ok: true, repo: repo.name, path: chosen.path, branch: chosen.branch })
     return
   }
 
   if (options.pathOnly) {
-    process.stdout.write(`${chosen}\n`)
+    process.stdout.write(`${chosen.path}\n`)
     return
   }
-  emitCd(chosen)
+  emitCd(chosen.path)
 }

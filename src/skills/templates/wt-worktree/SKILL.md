@@ -117,8 +117,9 @@ upstream explicitly: `git push -u origin HEAD`.
 grove list <repo> --json
 ```
 
-Returns `path`, `branch`, `isMain`, `dirty`, `upstream`, `ahead`, `merged`,
-and `parent` per worktree.
+Returns `path`, `branch`, `isMain`, `committedAt`, `dirty`, `upstream`,
+`ahead`, `merged`, and `parent` per worktree, main first and the rest newest
+commit first.
 
 ## Clean up
 

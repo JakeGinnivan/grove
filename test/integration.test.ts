@@ -784,8 +784,13 @@ describe('wt skills install', () => {
     expect(result.exitCode).toBe(0)
     const data = result.json<InstallTargets>()
     expect(data.targets).toHaveLength(1)
-    expect(data.targets[0]!.installed.sort()).toEqual(['wt-repos', 'wt-worktree'])
+    expect(data.targets[0]!.installed.sort()).toEqual([
+      'wt-repos',
+      'wt-tidy',
+      'wt-worktree',
+    ])
     expect(existsSync(join(target, 'wt-repos', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(target, 'wt-tidy', 'SKILL.md'))).toBe(true)
     expect(existsSync(join(target, 'wt-worktree', 'SKILL.md'))).toBe(true)
   })
 
@@ -838,7 +843,7 @@ describe('wt skills install', () => {
     )
     const data = again.json<InstallTargets>().targets[0]!
     expect(data.installed).toEqual([])
-    expect(data.skipped.sort()).toEqual(['wt-repos', 'wt-worktree'])
+    expect(data.skipped.sort()).toEqual(['wt-repos', 'wt-tidy', 'wt-worktree'])
   })
 
   it('overwrites with --force', async () => {
@@ -857,11 +862,13 @@ describe('wt skills install', () => {
   it('writes skills with valid frontmatter', async () => {
     const target = join(sandbox.root, 'skills-target')
     await runCli(['skills', 'install', '--target', target, '--json'], sandbox)
-    const content = await readFile(join(target, 'wt-worktree', 'SKILL.md'), 'utf8')
-    // git may check the template out with CRLF endings on Windows.
-    expect(content.replace(/\r\n/g, '\n')).toMatch(
-      /^---\nname: wt-worktree\ndescription: .+/m,
-    )
+    for (const name of ['wt-repos', 'wt-tidy', 'wt-worktree']) {
+      const content = await readFile(join(target, name, 'SKILL.md'), 'utf8')
+      // git may check the template out with CRLF endings on Windows.
+      expect(content.replace(/\r\n/g, '\n')).toMatch(
+        new RegExp(`^---\\nname: ${name}\\ndescription: .+`, 'm'),
+      )
+    }
   })
 })
 

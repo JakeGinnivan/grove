@@ -316,13 +316,16 @@ Which tools should grove install skills for?
   ◉ Gemini CLI           ~/.gemini/skills
 ```
 
-Two skills are installed:
+Three skills are installed:
 
 - **wt-repos** — discovering cloned repos and their paths, which profile each
   belongs to and what rules apply, and running `grove sync` before reading
   code so the agent is not reasoning about a stale checkout.
 - **wt-worktree** — creating worktrees for tasks, checking out branches,
   stacking work, and cleaning up safely.
+- **wt-tidy** — sweeping away worktrees whose PRs have merged (including
+  squash merges, via `gh`), then summarising what is unmerged in the rest so
+  you can choose which to rebase and open PRs for and which to discard.
 
 Each tool reads skills from its own directory, so grove writes a copy per
 tool. Supported: `claude`, `codex`, `copilot`, `cursor`, `gemini`, and

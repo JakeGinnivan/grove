@@ -3,6 +3,7 @@ import {
   arrange,
   flatten,
   describeStatus,
+  isSafeToRemove,
   matchWorktree,
   type WorktreeReport,
 } from '../src/core/worktree-view.js'
@@ -18,6 +19,8 @@ function report(dir: string, status: Partial<WorktreeReport> = {}): WorktreeRepo
     upstream: `origin/${dir}`,
     ahead: 0,
     merged: false,
+    base: 'origin/main',
+    behindBase: null,
     parent: null,
     ...status,
   }
@@ -44,11 +47,12 @@ describe('arrange', () => {
     expect(dirs(flatten(arranged))).toEqual(['main', 'a', 'b'])
   })
 
-  it('groups merged, clean and dirty in that order, newest first within each', () => {
+  it('groups by how safe removal is, newest first within each group', () => {
     const { groups } = arrange(
       [
         report('dirty', { dirty: true, committedAt: 30 }),
         report('clean'),
+        report('fresh', { merged: true, behindBase: 0 }),
         report('merged-old', { merged: true, committedAt: 10 }),
         report('merged-new', { merged: true, committedAt: 20 }),
       ],
@@ -56,6 +60,7 @@ describe('arrange', () => {
     )
     expect(groups.map((g) => [g.title, dirs(g.reports)])).toEqual([
       ['Merged', ['merged-new', 'merged-old']],
+      ['No commits of its own', ['fresh']],
       ['Clean, not merged', ['clean']],
       ['Uncommitted changes', ['dirty']],
     ])
@@ -86,6 +91,30 @@ describe('describeStatus', () => {
     expect(describeStatus(report('main', { isMain: true, merged: true }))).toBe(
       '○ clean, pushed',
     )
+  })
+
+  it('shows a branch with no commits of its own against base, not as merged', () => {
+    const fresh = { merged: true, upstream: null }
+    expect(describeStatus(report('a', { ...fresh, behindBase: 0 }))).toBe(
+      '○ clean, = origin/main',
+    )
+    expect(describeStatus(report('a', { ...fresh, behindBase: 3 }))).toBe(
+      '○ clean, 3 behind origin/main',
+    )
+  })
+
+  it('shows main behind origin', () => {
+    const main = report('main', { isMain: true, merged: true, behindBase: 2 })
+    expect(describeStatus(main)).toBe('○ clean, 2 behind origin/main, pushed')
+  })
+})
+
+describe('isSafeToRemove', () => {
+  it('covers merged branches and branches with no commits of their own', () => {
+    expect(isSafeToRemove(report('a', { merged: true }))).toBe(true)
+    expect(isSafeToRemove(report('a', { merged: true, behindBase: 0 }))).toBe(true)
+    expect(isSafeToRemove(report('a', { merged: true, behindBase: 0, dirty: true }))).toBe(false)
+    expect(isSafeToRemove(report('a'))).toBe(false)
   })
 })
 

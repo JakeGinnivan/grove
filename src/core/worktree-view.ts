@@ -10,6 +10,7 @@ import {
   aheadCount,
   defaultBase,
   isMergedInto,
+  behindOnMainline,
 } from './git.js'
 import { stackParentOf } from './worktree.js'
 
@@ -28,7 +29,15 @@ export interface WorktreeReport {
   dirty: boolean
   upstream: string | null
   ahead: number
+  /** Contained in `base`, including a branch with no commits of its own. */
   merged: boolean
+  /** The default branch status is compared against, e.g. `origin/main`. */
+  base: string | null
+  /**
+   * Set when the branch has no commits of its own: how far `base` has moved
+   * on since (0 means the same commit). Null when it has its own commits.
+   */
+  behindBase: number | null
   parent: string | null
 }
 
@@ -80,6 +89,8 @@ export async function loadWorktrees(
         upstream: null,
         ahead: 0,
         merged: false,
+        base: base ?? null,
+        behindBase: null,
         parent: null,
       }
       if (!status) return report
@@ -93,12 +104,20 @@ export async function loadWorktrees(
           report.merged = await isMergedInto(gitDir, `refs/heads/${wt.branch}`, base)
         }
       }
+      if (base && wt.head && report.merged) {
+        report.behindBase = (await behindOnMainline(gitDir, wt.head, base)) ?? null
+      }
       return report
     }),
   )
 }
 
-const STATUS_GROUPS = ['Merged', 'Clean, not merged', 'Uncommitted changes'] as const
+const STATUS_GROUPS = [
+  'Merged',
+  'No commits of its own',
+  'Clean, not merged',
+  'Uncommitted changes',
+] as const
 
 /**
  * Bucket by how safe a worktree is to remove: merged-and-clean ones lose
@@ -107,6 +126,7 @@ const STATUS_GROUPS = ['Merged', 'Clean, not merged', 'Uncommitted changes'] as 
  */
 function statusGroup(report: WorktreeReport): (typeof STATUS_GROUPS)[number] {
   if (report.dirty) return 'Uncommitted changes'
+  if (report.behindBase !== null) return 'No commits of its own'
   if (report.merged) return 'Merged'
   return 'Clean, not merged'
 }
@@ -145,17 +165,23 @@ type Color = Parameters<typeof styleText>[0]
 
 /** Status tags for a report, most important first. */
 function statusTags(report: WorktreeReport): { text: string; color: Color }[] {
-  // The main checkout always counts as merged into its own upstream.
-  const merged = report.merged && !report.isMain
+  // The main checkout always counts as merged into its own upstream, and a
+  // branch with no commits of its own was never really merged.
+  const merged = report.merged && !report.isMain && report.behindBase === null
   const tags: { text: string; color: Color }[] = [
     report.dirty
       ? { text: '● uncommitted changes', color: 'yellow' }
       : { text: '○ clean', color: 'green' },
   ]
   if (merged) tags.push({ text: '✔ merged', color: 'green' })
+  if (report.behindBase === 0) tags.push({ text: `= ${report.base}`, color: 'green' })
+  if (report.behindBase) {
+    tags.push({ text: `${report.behindBase} behind ${report.base}`, color: 'cyan' })
+  }
   if (report.ahead > 0) tags.push({ text: `${report.ahead} unpushed`, color: 'yellow' })
   else if (report.upstream && !merged) tags.push({ text: 'pushed', color: 'gray' })
-  if (!report.upstream && !merged) tags.push({ text: 'not pushed', color: 'gray' })
+  // Nothing to push when every commit is already in base.
+  if (!report.upstream && !report.merged) tags.push({ text: 'not pushed', color: 'gray' })
   if (report.parent) tags.push({ text: `on ${report.parent}`, color: 'magenta' })
   return tags
 }

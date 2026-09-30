@@ -443,6 +443,34 @@ describe('wt list', () => {
     expect(entry?.dirty).toBe(true)
   })
 
+  it('tells a branch with no commits of its own apart from a merged one', async () => {
+    type Entry = { dir: string; isMain: boolean; merged: boolean; behindBase: number | null }
+    const list = async () =>
+      (await runCli(['list', 'demo', '--json'], sandbox)).json<{ worktrees: Entry[] }>()
+        .worktrees
+    const find = (entries: Entry[], suffix: string) =>
+      entries.find((entry) => entry.dir.endsWith(suffix))
+
+    const fresh = await runCli(['new', 'demo', '--title', 'fresh', '--json'], sandbox)
+    const feature = await runCli(['new', 'demo', '--title', 'feature', '--json'], sandbox)
+    const featurePath = feature.json<{ path: string }>().path
+    expect(fresh.exitCode).toBe(0)
+    expect(find(await list(), 'fresh')).toMatchObject({ merged: true, behindBase: 0 })
+
+    // Merge the feature through a merge commit and publish it, so origin/main
+    // moves on past the fresh branch.
+    await gitIn(['commit', '--allow-empty', '-m', 'feature work'], featurePath)
+    await gitIn(['merge', '--no-ff', '-m', 'merge feature', 'test/feature'], sandbox.mainPath)
+    await gitIn(['push', 'origin', 'main'], sandbox.mainPath)
+    await gitIn(['fetch', 'origin'], sandbox.mainPath)
+
+    const after = await list()
+    expect(find(after, 'feature')).toMatchObject({ merged: true, behindBase: null })
+    // Behind by the feature commit and the merge commit, counted as git does.
+    expect(find(after, 'fresh')).toMatchObject({ merged: true, behindBase: 2 })
+    expect(after[0]).toMatchObject({ isMain: true, behindBase: 0 })
+  })
+
   it('keeps main first and orders the rest newest commit first', async () => {
     const paths: string[] = []
     for (const title of ['alpha work', 'beta work']) {

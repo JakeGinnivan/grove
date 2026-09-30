@@ -30,7 +30,7 @@ export function cleanupCommand(): Command {
     .description('Remove finished worktrees')
     .argument('[repo]', 'registered repo name, or "self" for the current one')
     .argument('[worktrees...]', 'worktree directories or branches to remove')
-    .option('--merged', 'select all worktrees merged into the default branch')
+    .option('--merged', 'select every clean worktree that is merged or has no commits of its own')
     .option('--force', 'remove even when dirty or unmerged')
     .option('-y, --yes', 'skip confirmation prompts')
     .option('--delete-branch', 'also delete the local branch')

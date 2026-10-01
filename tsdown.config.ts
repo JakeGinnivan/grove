@@ -12,5 +12,6 @@ export default defineConfig({
   copy: [
     { from: 'src/skills/templates/wt-repos', to: 'dist/skills' },
     { from: 'src/skills/templates/wt-worktree', to: 'dist/skills' },
+    { from: 'src/skills/templates/wt-tidy', to: 'dist/skills' },
   ],
 })

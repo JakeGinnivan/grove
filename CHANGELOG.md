@@ -1,5 +1,56 @@
 # @jakeginnivan/grove
 
+## 0.6.0
+
+### Minor Changes
+
+- 5678d24: `grove list`, the `grove pick` picker and the `cleanup` picker now show
+  worktrees most recent first, ordered by each worktree's latest commit. The main
+  checkout stays pinned at the top, and `grove list` leaves a gap after it.
+
+  The `grove pick` picker also shows each worktree's status the way `cleanup`
+  does (uncommitted changes, merged, unpushed, no upstream), and ends with a
+  "Clean up worktrees…" entry that opens the cleanup picker.
+
+- 8ffdcc1: `grove list`, `grove pick` and `grove cleanup` now share one view of your
+  worktrees: main on top, the rest newest commit first, and every row shows its
+  status, including whether the branch is pushed. `list` shows status by default
+  (`--no-status` skips it). All three accept `--sort recent|name` and
+  `--group status|none`; `cleanup` still groups by status by default.
+  `list --json` gains a `committedAt` field.
+
+  A branch with no commits of its own no longer shows as merged. It shows
+  `= origin/main`, or how far behind `origin/main` it is, and `cleanup` groups
+  these under "No commits of its own", preselects them like merged ones, and
+  includes them in `--merged`. Main shows when it is behind `origin/main` too.
+
+- 6568b31: New `wt-tidy` agent skill. It removes worktrees whose PRs have merged,
+  including squash merges that git ancestry misses, then summarises the
+  unmerged work in every remaining worktree so you can pick which to rebase
+  and open PRs for and which to discard.
+
+### Patch Changes
+
+- d8f92e9: `grove cleanup` works inside Claude Code's sandbox again. The sandbox cannot
+  write `~/.Trash`, so every worktree was skipped with "could not move worktree to
+  trash". When the system trash refuses, removed worktrees now move to a
+  `.grove-trash/` folder beside the worktrees, which is cleared after 14 days.
+  The result says where each one went (`trashDir` in `--json`).
+- 206a955: grove now works from inside Claude Code's sandbox, which never lets a command
+  write a repo's `.git/config`.
+
+  - Stack parents and port settings are stored in `.git/grove/config` instead of
+    `.git/config`, so `grove new --on` and port assignment no longer fail
+    halfway. Values older versions wrote to `.git/config` are still read.
+  - A branch with no configured upstream is compared against where `git push`
+    sends it, or `origin/<branch>`, so a branch pushed with `git push origin HEAD`
+    shows as pushed with the right unpushed count.
+  - The `wt-worktree` skill tells agents to push with `git push origin HEAD`
+    rather than `-u`.
+
+- f89bb9a: The `wt-worktree` skill now tells agents to compare and rebase against
+  `origin/main` rather than local `main`, which is often behind.
+
 ## 0.5.0
 
 ### Minor Changes

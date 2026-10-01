@@ -33,8 +33,9 @@ grove cleanup <repo> --merged --dry-run --json
 grove cleanup <repo> --merged --yes --delete-branch --json
 ```
 
-grove's `merged` means the branch tip is an ancestor of the default branch.
-A **squash- or rebase-merged** PR fails that test, so grove reports it as
+grove's `merged` means the branch tip is an ancestor of the default branch,
+which also covers branches with no commits of their own. A **squash- or
+rebase-merged** PR fails that test, so grove reports it as
 unmerged. Close the gap with GitHub, for each remaining clean worktree on a
 branch:
 
@@ -65,9 +66,9 @@ For each remaining worktree, gather from inside it:
 - `git diff --stat origin/<default>...HEAD` and `git status --short`: what
   changed, committed and not.
 - `git rev-list --count HEAD..origin/<default>`: how far behind it is.
-- The upstream and ahead count from `grove list <repo> --status --json`.
-- `parent` from the same listing. A stacked branch is compared against its
-  parent branch, not the default branch, everywhere in this skill.
+- `upstream`, `ahead`, and `parent` from `grove list <repo> --json`. A
+  stacked branch is compared against its parent branch, not the default
+  branch, everywhere in this skill.
 - `gh pr list --head <branch> --state all --json number,state,isDraft,url,title`.
 
 Read the diff itself, not just the stat, until you can say in one line what
@@ -99,8 +100,8 @@ or "no PR". The suggestion is one of:
 - **rebase, open PR**: finished-looking work with no open PR.
 - **rebase, update PR**: an open PR that is behind.
 - **leave**: an open PR that is current, or work still in progress.
-- **discard**: an abandoned spike, work superseded by something on the
-  default branch, or a branch with no commits and no changes.
+- **discard**: an abandoned spike, or work superseded by something on the
+  default branch.
 
 Then ask which to keep and which to discard. Take the user's answer per
 worktree; a bare "yes" confirms your suggestions. Triage is done when every

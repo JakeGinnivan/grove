@@ -8,6 +8,7 @@ import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { emitJson, log, success, warn, info, getOutputContext } from '../core/output.js'
 import { confirm, multiselect, canPrompt } from '../core/prompts.js'
 import { WtError } from '../core/errors.js'
+import { applyAutoModeHints, type AutoModeHintsResult } from '../core/claude-settings.js'
 
 /**
  * Agent tools we know how to install skills for.
@@ -90,6 +91,8 @@ export function skillsCommand(): Command {
     .option('-t, --target <target...>', targetHelp)
     .option('-f, --force', 'overwrite existing skills')
     .option('--dry-run', 'show what would be installed')
+    .option('--claude-auto-mode', "add grove's auto mode hints to ~/.claude/settings.json")
+    .option('--no-claude-auto-mode', 'do not offer to add auto mode hints')
     .action(async (options) => {
       await runInstall(options)
     })
@@ -205,6 +208,7 @@ async function runInstall(options: {
   target?: string[]
   force?: boolean
   dryRun?: boolean
+  claudeAutoMode?: boolean
 }): Promise<void> {
   const source = templatesDir()
   const targets = await chooseTargets(options.target, 'install')
@@ -229,6 +233,9 @@ async function runInstall(options: {
   }))
 
   if (options.dryRun) {
+    const autoMode = wantsClaude(targets) && options.claudeAutoMode !== false
+      ? await applyAutoModeHints({ dryRun: true })
+      : null
     if (getOutputContext().json) {
       emitJson({
         ok: true,
@@ -238,6 +245,7 @@ async function runInstall(options: {
           dir: target.dir,
           skills: items,
         })),
+        claudeAutoMode: autoMode,
       })
       return
     }
@@ -245,6 +253,11 @@ async function runInstall(options: {
     for (const { target, items } of plan) {
       log(pc.bold(`Would install to ${target.dir}`))
       for (const item of items) log(`  ${item.name}  ${pc.dim(item.action)}`)
+      log()
+    }
+    if (autoMode) {
+      log(pc.bold('Claude Code auto mode hints'))
+      log(`  ${autoMode.path}  ${pc.dim(autoMode.status === 'present' ? 'already present' : autoMode.status)}`)
       log()
     }
     return
@@ -271,8 +284,12 @@ async function runInstall(options: {
     reports.push(report)
   }
 
+  const autoMode = wantsClaude(targets)
+    ? await installAutoModeHints(options.claudeAutoMode)
+    : null
+
   if (getOutputContext().json) {
-    emitJson({ ok: true, targets: reports })
+    emitJson({ ok: true, targets: reports, claudeAutoMode: autoMode })
     return
   }
 
@@ -286,11 +303,57 @@ async function runInstall(options: {
       warn(`${name} already installed for ${label} (use --force to overwrite)`)
     }
   }
+  if (autoMode) reportAutoMode(autoMode)
   if (reports.some((report) => report.installed.length > 0)) {
     log()
     info('Agents will pick these up on their next session.')
   }
   log()
+}
+
+function wantsClaude(targets: ResolvedTarget[]): boolean {
+  return targets.some((target) => target.name === 'claude')
+}
+
+type AutoModeOutcome = AutoModeHintsResult | { status: 'declined' | 'not-requested' }
+
+/**
+ * Offer to teach Claude Code's auto mode classifier about grove. This edits
+ * the user's own Claude settings, so it is opt-in: an explicit flag, or a yes
+ * at the prompt. A non-interactive run without the flag changes nothing.
+ */
+async function installAutoModeHints(requested: boolean | undefined): Promise<AutoModeOutcome> {
+  if (requested === false) return { status: 'declined' }
+  if (requested === true) return applyAutoModeHints()
+
+  const preview = await applyAutoModeHints({ dryRun: true })
+  if (preview.status === 'present' || preview.status === 'invalid') return preview
+  if (!canPrompt() || getOutputContext().json) return { status: 'not-requested' }
+
+  log()
+  const proceed = await confirm(
+    `Add grove's auto mode hints to ${preview.path}? They tell Claude Code's auto mode that grove cleanup without --force is safe.`,
+    { assumeYes: false, defaultValue: true, what: 'Adding auto mode hints' },
+  )
+  return proceed ? applyAutoModeHints() : { status: 'declined' }
+}
+
+function reportAutoMode(outcome: AutoModeOutcome): void {
+  switch (outcome.status) {
+    case 'added':
+    case 'updated':
+      success(`Auto mode hints ${outcome.status} in ${outcome.path}`)
+      info('Check with `claude auto-mode config`.')
+      break
+    case 'invalid':
+      warn(`Left ${outcome.path} unchanged: ${outcome.reason}`)
+      break
+    case 'not-requested':
+      info('Pass --claude-auto-mode to add grove hints to Claude Code auto mode.')
+      break
+    default:
+      break
+  }
 }
 
 async function runList(options: { target?: string[] }): Promise<void> {

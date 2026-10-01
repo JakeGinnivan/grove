@@ -625,8 +625,9 @@ describe('wt cleanup', () => {
       sandbox,
     )
     expect(result.exitCode).toBe(0)
-    const data = result.json<{ removed: { removed: boolean }[] }>()
-    expect(data.removed[0]?.removed).toBe(true)
+    const data = result.json<{ removed: { path: string }[]; skipped: unknown[] }>()
+    expect(data.removed).toHaveLength(1)
+    expect(data.skipped).toEqual([])
     expect(existsSync(path)).toBe(false)
   })
 
@@ -693,8 +694,10 @@ describe('wt cleanup', () => {
       ['cleanup', 'demo', path, '--yes', '--no-trash', '--json'],
       sandbox,
     )
-    const data = result.json<{ removed: { skipped: string | null }[] }>()
-    expect(data.removed[0]?.skipped).toMatch(/--force/)
+    const data = result.json<{ removed: unknown[]; skipped: { reason: string }[] }>()
+    // A skipped worktree must not be listed under `removed`.
+    expect(data.removed).toEqual([])
+    expect(data.skipped[0]?.reason).toMatch(/--force/)
     expect(existsSync(path)).toBe(true)
   })
 
@@ -710,9 +713,7 @@ describe('wt cleanup', () => {
       ['cleanup', 'demo', path, '--force', '--no-trash', '--json'],
       sandbox,
     )
-    expect(result.json<{ removed: { removed: boolean }[] }>().removed[0]?.removed).toBe(
-      true,
-    )
+    expect(result.json<{ removed: unknown[] }>().removed).toHaveLength(1)
     expect(existsSync(path)).toBe(false)
   })
 
@@ -749,8 +750,8 @@ describe('wt cleanup', () => {
       { GROVE_TRASH_DIR: trashDir },
     )
 
-    const data = result.json<{ removed: { removed: boolean; trashed: boolean }[] }>()
-    expect(data.removed[0]?.removed).toBe(true)
+    const data = result.json<{ removed: { trashed: boolean }[] }>()
+    expect(data.removed).toHaveLength(1)
     expect(data.removed[0]?.trashed).toBe(true)
 
     // The files survive in the trash...
@@ -800,11 +801,9 @@ describe('wt cleanup', () => {
       sandbox,
       { GROVE_TRASH_DIR: join(path, 'trash') },
     )
-    const data = result.json<{
-      removed: { removed: boolean; skipped: string }[]
-    }>()
-    expect(data.removed[0]?.removed).toBe(false)
-    expect(data.removed[0]?.skipped).toMatch(/--no-trash/)
+    const data = result.json<{ removed: unknown[]; skipped: { reason: string }[] }>()
+    expect(data.removed).toEqual([])
+    expect(data.skipped[0]?.reason).toMatch(/--no-trash/)
     expect(existsSync(path)).toBe(true)
   })
 

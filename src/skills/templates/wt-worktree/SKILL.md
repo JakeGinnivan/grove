@@ -147,8 +147,9 @@ Safety model — read this before automating removal:
 - `--merged` selects everything already merged into the default branch.
 - `--delete-branch` also deletes the local branch.
 
-Removed worktrees go to the system trash where supported, so a mistake is
-usually recoverable.
+Removed worktrees go to the system trash, or, where that is not writable (as
+in a sandbox), to `.grove-trash/` beside the worktrees for 14 days. The JSON
+result's `trashDir` says which. Either way a mistake is recoverable.
 
 ## Profiles
 

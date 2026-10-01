@@ -228,8 +228,10 @@ wt cleanup self                          # the worktree you are standing in
 
 Worktrees with uncommitted changes or unpushed commits are **skipped** unless
 you pass `--force`, and `--yes` alone will not override that. Removed
-directories go to the system trash where available. `--dry-run` shows what
-would happen.
+directories go to the system trash where available. Where it is not, such as
+inside Claude Code's sandbox, which cannot write `~/.Trash`, they move to a
+`.grove-trash/` folder beside the worktrees instead, and entries there are
+deleted after 14 days. `--dry-run` shows what would happen.
 
 ## Profiles
 
@@ -484,6 +486,7 @@ records for worktree directories that are already missing. See the
 
 `GROVE_BRANCH_PREFIX`, `GROVE_DEFAULT_CODE_DIR`, `GROVE_REPOS_FILE`, and
 `GROVE_TRASH_DIR` override the file. The older `WT_*` names are still honoured.
+`GROVE_SYSTEM_TRASH=0` skips the system trash and always uses `.grove-trash/`.
 
 The registry format is shared with the original zsh helper, so an existing
 `~/.wt_repos` keeps working:

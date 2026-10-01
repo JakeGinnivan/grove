@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
 import { writeFile, readFile, mkdir, readdir, symlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import {
   createSandbox,
   runCli,
@@ -763,6 +763,28 @@ describe('wt cleanup', () => {
     const list = await runCli(['list', 'demo', '--json'], sandbox)
     const worktrees = list.json<{ worktrees: { path: string }[] }>().worktrees
     expect(worktrees.map((wt) => wt.path)).not.toContain(path)
+  })
+
+  it('falls back to a trash folder beside the worktrees', async () => {
+    const created = await runCli(['new', 'demo', '--title', 'local trash', '--json'], sandbox)
+    const path = created.json<{ path: string }>().path
+
+    // What happens inside Claude Code's sandbox, where ~/.Trash is unwritable.
+    const result = await runCli(
+      ['cleanup', 'demo', path, '--yes', '--json'],
+      sandbox,
+      { GROVE_SYSTEM_TRASH: '0' },
+    )
+    const outcome = result.json<{
+      removed: { removed: boolean; trashed: boolean; trashDir: string | null }[]
+    }>().removed[0]
+    expect(outcome).toMatchObject({ removed: true, trashed: true })
+
+    const trashRoot = join(sandbox.repoPath, '.grove-trash')
+    expect(outcome?.trashDir?.startsWith(trashRoot)).toBe(true)
+    expect(existsSync(join(outcome!.trashDir!, basename(path), 'README.md'))).toBe(true)
+    expect(await readFile(join(trashRoot, '.gitignore'), 'utf8')).toBe('*\n')
+    expect(existsSync(path)).toBe(false)
   })
 
   it('does not permanently delete when moving to trash fails', async () => {

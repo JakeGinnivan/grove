@@ -138,7 +138,8 @@ grove cleanup <repo> <dir> --force --delete-branch --yes --json
 ```
 
 The user's discard answer is what licenses `--force`. Removed worktrees go to
-the trash, so they are recoverable. When a discarded branch has an open PR,
+the trash, or `.grove-trash/` beside the worktrees when the system trash is
+not writable, so they are recoverable. When a discarded branch has an open PR,
 ask whether to close it; the remote branch and PR stay otherwise.
 
 ## Report

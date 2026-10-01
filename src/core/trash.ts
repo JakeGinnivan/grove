@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { rename, mkdir, rm } from 'node:fs/promises'
+import { rename, mkdir, rm, readdir, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 const execFileAsync = promisify(execFile)
 
@@ -27,27 +27,40 @@ function trashDirOverride(): string | undefined {
   return dir && dir.length > 0 ? dir : undefined
 }
 
-/** Whether any trash mechanism is available on this platform. */
-export async function canTrash(): Promise<boolean> {
-  if (trashDirOverride()) return true
-  if (await has('trash')) return true
-  if (await has('trash-put')) return true
-  if (await has('gio')) return true
-  return existsSync(join(homedir(), '.Trash'))
-}
+/**
+ * Folder beside the worktrees that takes removed ones when the system trash
+ * will not. Claude Code's sandbox cannot write `~/.Trash`, so every system
+ * mechanism fails there, but anything allowed to delete a worktree may rename
+ * it within the same parent directory.
+ */
+export const LOCAL_TRASH = '.grove-trash'
+
+/** Entries in the local trash older than this are deleted for good. */
+const LOCAL_TRASH_DAYS = 14
 
 /**
- * Move a path to the OS trash. Returns false when no mechanism worked, so
- * callers can decide whether to fall back to a permanent delete.
+ * Where a removed path went: `system` for the OS trash, otherwise the
+ * directory it was moved into.
  */
-export async function moveToTrash(path: string): Promise<boolean> {
-  if (!existsSync(path)) return true
+export type TrashDestination = 'system' | string
 
+/**
+ * Move a path out of the way without destroying it: the OS trash where that
+ * works, otherwise the local trash beside it. Undefined when nothing worked,
+ * so a failed move never silently becomes a permanent delete.
+ */
+export async function moveToTrash(path: string): Promise<TrashDestination | undefined> {
+  if (!existsSync(path)) return 'system'
+
+  // An explicit trash dir is the only place tried: falling back elsewhere
+  // would surprise whoever set it.
   const override = trashDirOverride()
   if (override) {
     await mkdir(override, { recursive: true })
-    return moveInto(override, path)
+    return (await moveInto(override, path)) ? override : undefined
   }
+
+  if (process.env['GROVE_SYSTEM_TRASH'] === '0') return localTrash(path)
 
   for (const [command, args] of [
     ['trash', [path]],
@@ -57,7 +70,7 @@ export async function moveToTrash(path: string): Promise<boolean> {
     if (await has(command)) {
       try {
         await execFileAsync(command, [...args])
-        return true
+        return 'system'
       } catch {
         // Try the next mechanism.
       }
@@ -66,9 +79,46 @@ export async function moveToTrash(path: string): Promise<boolean> {
 
   // macOS fallback: move into ~/.Trash ourselves.
   const trashDir = join(homedir(), '.Trash')
-  if (existsSync(trashDir)) return moveInto(trashDir, path)
+  if (existsSync(trashDir) && (await moveInto(trashDir, path))) return 'system'
 
-  return false
+  return localTrash(path)
+}
+
+async function localTrash(path: string): Promise<string | undefined> {
+  const slot = await localTrashSlot(dirname(path))
+  return (await moveInto(slot, path)) ? slot : undefined
+}
+
+/**
+ * A fresh folder in the local trash for one removal. Its age is what
+ * `purgeLocalTrash` goes by, since a moved directory keeps its own mtime.
+ */
+async function localTrashSlot(parent: string): Promise<string> {
+  const root = join(parent, LOCAL_TRASH)
+  await mkdir(root, { recursive: true })
+  // Keeps git from ever seeing it, should the parent be a working tree.
+  const ignore = join(root, '.gitignore')
+  if (!existsSync(ignore)) await writeFile(ignore, '*\n')
+  const slot = join(root, new Date().toISOString().replace(/[:.]/g, '-'))
+  await mkdir(slot, { recursive: true })
+  return slot
+}
+
+/** Delete local trash entries older than LOCAL_TRASH_DAYS. Returns how many. */
+export async function purgeLocalTrash(parent: string, now = Date.now()): Promise<number> {
+  const root = join(parent, LOCAL_TRASH)
+  if (!existsSync(root)) return 0
+  const cutoff = now - LOCAL_TRASH_DAYS * 24 * 60 * 60 * 1000
+  let purged = 0
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const slot = join(root, entry.name)
+    if ((await stat(slot)).mtimeMs < cutoff) {
+      await rm(slot, { recursive: true, force: true })
+      purged++
+    }
+  }
+  return purged
 }
 
 /** Move `path` into `trashDir`, de-duplicating the destination name. */

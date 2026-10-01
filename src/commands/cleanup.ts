@@ -5,7 +5,7 @@ import { samePath } from '../core/paths.js'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
 import { git, listWorktrees, localBranchExists, removeConfigSection } from '../core/git.js'
-import { canTrash, moveToTrash } from '../core/trash.js'
+import { moveToTrash, purgeLocalTrash } from '../core/trash.js'
 import { groupMultiselect, multiselect, confirm } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
@@ -60,6 +60,8 @@ interface RemovalOutcome {
   branch: string | null
   removed: boolean
   trashed: boolean
+  /** The local trash folder it went to, or null for the system trash. */
+  trashDir: string | null
   branchDeleted: boolean
   skipped: string | null
 }
@@ -172,7 +174,7 @@ export async function runCleanup(
   }
 
   const outcomes: RemovalOutcome[] = []
-  const useTrash = options.trash && config.useTrash && (await canTrash())
+  const useTrash = options.trash && config.useTrash
 
   for (const report of selected) {
     outcomes.push(
@@ -194,7 +196,7 @@ export async function runCleanup(
     if (outcome.skipped) {
       warn(`Skipped ${basename(outcome.path)}: ${outcome.skipped}`)
     } else {
-      const suffix = outcome.trashed ? pc.dim(' (moved to trash)') : ''
+      const suffix = trashNote(outcome)
       const branchNote = outcome.branchDeleted
         ? pc.dim(`, deleted branch ${outcome.branch}`)
         : ''
@@ -218,6 +220,7 @@ async function removeOne(
     branch: report.branch,
     removed: false,
     trashed: false,
+    trashDir: null,
     branchDeleted: false,
     skipped: null,
   }
@@ -259,9 +262,13 @@ async function removeOne(
       return outcome
     }
 
-    if (await moveToTrash(report.path)) {
+    // Before the move, so this removal's own entry is never the one purged.
+    await purgeLocalTrash(dirname(report.path))
+    const destination = await moveToTrash(report.path)
+    if (destination) {
       outcome.removed = true
       outcome.trashed = true
+      outcome.trashDir = destination === 'system' ? null : destination
       const pruned = await git(['worktree', 'prune'], {
         cwd: gitDir,
         allowFailure: true,
@@ -308,6 +315,11 @@ async function deleteBranchIfRequested(
   if (outcome.branchDeleted) {
     await removeConfigSection(gitDir, `branch.${report.branch}`)
   }
+}
+
+function trashNote(outcome: RemovalOutcome): string {
+  if (outcome.trashDir) return pc.dim(` (moved to ${outcome.trashDir})`)
+  return outcome.trashed ? pc.dim(' (moved to trash)') : ''
 }
 
 /** True when git has the worktree marked as locked. */
@@ -361,7 +373,7 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
   }
 
   const config = await loadConfig()
-  const useTrash = options.trash && config.useTrash && (await canTrash())
+  const useTrash = options.trash && config.useTrash
 
   if (!options.yes && !options.force) {
     const proceed = await confirm(`Remove the current worktree ${report.dir}?`, {
@@ -390,7 +402,7 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
     warn(`Skipped: ${outcome.skipped}`)
     return
   }
-  success(`Removed ${report.dir}`)
+  success(`Removed ${report.dir}${trashNote(outcome)}`)
   // The shell is now inside a deleted directory; move it somewhere valid.
   info(`Returning to ${gitRoot}`)
   emitCd(gitRoot)

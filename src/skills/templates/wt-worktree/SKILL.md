@@ -97,8 +97,9 @@ grove new <repo> --title "address review feedback" --on 260810-fix-flaky-login-t
 ```
 
 `--on` accepts a worktree directory name, a worktree path, or a branch name.
-The new branch starts at that branch's tip, and the parent is recorded in git
-config (`branch.<name>.wt-parent`) so the stack is discoverable later:
+The new branch starts at that branch's tip, and the parent is recorded in
+grove's own config file (`.git/grove/config`) so the stack is discoverable
+later:
 
 ```json
 { "ok": true, "branch": "you/address-review-feedback",
@@ -108,8 +109,16 @@ config (`branch.<name>.wt-parent`) so the stack is discoverable later:
 
 `grove list <repo> --json` reports `parent` for every stacked branch.
 
-Stacked branches have no upstream until you push. When pushing one, set the
-upstream explicitly: `git push -u origin HEAD`.
+## Push
+
+```bash
+git push origin HEAD
+```
+
+Do not pass `-u`, and do not rely on a bare `git push` setting one up. Both
+record an upstream in `.git/config`, which a sandboxed agent cannot write, so
+the push succeeds and then git reports an error. grove treats `origin/<branch>`
+as the upstream when none is configured, so nothing is lost.
 
 ## Inspect worktrees
 

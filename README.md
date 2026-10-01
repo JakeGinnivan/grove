@@ -174,15 +174,22 @@ wt new my-service "address feedback" --on 260810-fix-flaky-login-test
 ```
 
 `--on` accepts a worktree directory, a worktree path, or a branch name. The
-parent is recorded in git config (`branch.<name>.wt-parent`), so `wt list`
-shows the stack:
+parent is recorded in grove's own config file, `.git/grove/config`
+(`branch.<name>.wt-parent`), so `wt list` shows the stack:
 
 ```
 260810-fix-flaky-login-test  you/fix-flaky-login-test
 260810-address-feedback      you/address-feedback   on you/fix-flaky-login-test
 ```
 
-Stacked branches have no upstream until you push; use `git push -u origin HEAD`.
+Push with `git push origin HEAD`. grove treats `origin/<branch>` as the
+branch's upstream when none is configured, so `-u` is not needed, and agents in
+Claude Code's sandbox cannot use it: recording an upstream writes
+`.git/config`, which the sandbox never allows.
+
+grove keeps all of its own state (stack parents, port settings) in
+`.git/grove/config` for the same reason, and still reads values older versions
+wrote to `.git/config`.
 
 ### Move around
 

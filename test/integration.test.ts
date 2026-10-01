@@ -253,6 +253,42 @@ describe('wt new --on (stacking)', () => {
     }>()
     const entry = data.worktrees.find((wt) => wt.branch === stacked.branch)
     expect(entry?.parent).toBe(base.branch)
+
+    // Kept out of .git/config, which Claude Code's sandbox never lets a
+    // command write.
+    const gitDir = join(sandbox.mainPath, '.git')
+    expect(await readFile(join(gitDir, 'config'), 'utf8')).not.toContain('wt-parent')
+    expect(await readFile(join(gitDir, 'grove', 'config'), 'utf8')).toContain(base.branch)
+  })
+
+  it('forgets the parent when cleanup deletes the branch', async () => {
+    const first = await runCli(['new', 'demo', '--title', 'stack base', '--json'], sandbox)
+    const base = first.json<{ branch: string }>()
+    const second = await runCli(
+      ['new', 'demo', '--title', 'stack top', '--on', base.branch, '--json'],
+      sandbox,
+    )
+    const top = second.json<{ path: string; branch: string }>()
+
+    const removed = await runCli(
+      ['cleanup', 'demo', top.path, '--yes', '--force', '--delete-branch', '--no-trash', '--json'],
+      sandbox,
+    )
+    expect(removed.exitCode).toBe(0)
+    const groveConfig = await readFile(join(sandbox.mainPath, '.git', 'grove', 'config'), 'utf8')
+    expect(groveConfig).not.toContain(top.branch)
+  })
+
+  it('still reads a parent that older versions wrote to .git/config', async () => {
+    const created = await runCli(['new', 'demo', '--title', 'legacy', '--json'], sandbox)
+    const { branch } = created.json<{ branch: string }>()
+    await gitIn(['config', `branch.${branch}.wt-parent`, 'main'], sandbox.mainPath)
+
+    const list = await runCli(['list', 'demo', '--json'], sandbox)
+    const entry = list
+      .json<{ worktrees: { branch: string | null; parent: string | null }[] }>()
+      .worktrees.find((wt) => wt.branch === branch)
+    expect(entry?.parent).toBe('main')
   })
 
   it('errors when --on cannot be resolved', async () => {
@@ -426,6 +462,21 @@ describe('wt checkout', () => {
 })
 
 describe('wt list', () => {
+  it('treats a branch pushed without -u as pushed', async () => {
+    const created = await runCli(['new', 'demo', '--title', 'no tracking', '--json'], sandbox)
+    const { path, branch } = created.json<{ path: string; branch: string }>()
+    await gitIn(['commit', '--allow-empty', '-m', 'work'], path)
+    // What a sandboxed agent can do: push without recording an upstream.
+    await gitIn(['push', 'origin', 'HEAD'], path)
+    await gitIn(['commit', '--allow-empty', '-m', 'more work'], path)
+
+    const list = await runCli(['list', 'demo', '--status', '--json'], sandbox)
+    const entry = list
+      .json<{ worktrees: { path: string; upstream: string | null; ahead: number }[] }>()
+      .worktrees.find((wt) => wt.path === path)
+    expect(entry).toMatchObject({ upstream: `origin/${branch}`, ahead: 1 })
+  })
+
   it('marks the main worktree and reports dirty state', async () => {
     const created = await runCli(
       ['new', 'demo', '--title', 'dirty work', '--json'],

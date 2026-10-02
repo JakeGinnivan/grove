@@ -351,6 +351,27 @@ tool without prompting. `grove skills list` shows where the skills are
 installed and which tools were detected; `grove skills uninstall` removes
 them.
 
+#### Claude Code auto mode
+
+When installing for Claude Code, grove offers to add two hints to
+`~/.claude/settings.json` for
+[auto mode](https://code.claude.com/docs/en/auto-mode-config). Without them,
+the auto mode classifier sees `grove cleanup` as a command that deletes
+directories, and blocks routine cleanups.
+
+- `autoMode.environment` describes grove and which commands are read-only.
+- `autoMode.allow` allows `grove cleanup` **without** `--force`, which skips
+  anything with uncommitted or unpushed work and moves what it removes to the
+  trash or `.grove-trash/`. `--force` stays subject to the classifier.
+
+It is opt-in. Answer yes at the prompt, or pass `--claude-auto-mode`. Without
+a TTY nothing changes unless the flag is passed, and `--no-claude-auto-mode`
+skips the offer. A list grove creates starts with `"$defaults"`, so Claude
+Code's built-in rules stay in effect. Existing lists are appended to as
+written. A symlinked settings file (for example into a dotfiles repo) is
+written through, not replaced. Re-running install updates grove's wording in
+place. Check the result with `claude auto-mode config`.
+
 ### Non-interactive commands
 
 Every command runs unattended. `--json` prints a machine-readable result and

@@ -151,6 +151,27 @@ Removed worktrees go to the system trash, or, where that is not writable (as
 in a sandbox), to `.grove-trash/` beside the worktrees for 14 days. The JSON
 result's `trashDir` says which. Either way a mistake is recoverable.
 
+### Reading the result
+
+`ok: true` means the command ran, not that anything was removed. A run where
+every worktree was skipped is still `ok: true`. The result splits the two:
+
+```json
+{ "ok": true, "repo": "my-service",
+  "removed": [{ "path": "...", "branch": "...", "trashed": true, "trashDir": null, "branchDeleted": true }],
+  "skipped": [{ "path": "...", "branch": "...", "reason": "has uncommitted changes; pass --force to remove" }] }
+```
+
+- Before telling the user a worktree is gone, find its path in `removed`.
+  Report every `skipped` entry with its reason. Don't filter the JSON down
+  to paths before reading it.
+- Tell the user where removed worktrees went: the system trash when
+  `trashDir` is null, otherwise that `.grove-trash/` folder.
+- If a worktree is skipped with `could not move worktree to trash`, report
+  it. Don't switch to `--no-trash`, which deletes permanently.
+- After a bulk cleanup, confirm with `grove list <repo> --json` that the
+  removed worktrees are no longer listed.
+
 ## Profiles
 
 Repositories live under profile directories that carry their own policy —

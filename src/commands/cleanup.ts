@@ -66,6 +66,28 @@ interface RemovalOutcome {
   skipped: string | null
 }
 
+/**
+ * Split outcomes for JSON. A skipped worktree must never appear under
+ * `removed`: agents read that key's paths as proof of removal, and the run is
+ * still `ok` when every requested worktree was skipped.
+ */
+function partitionOutcomes(outcomes: RemovalOutcome[]) {
+  return {
+    removed: outcomes
+      .filter((outcome) => outcome.removed)
+      .map(({ path, branch, trashed, trashDir, branchDeleted }) => ({
+        path,
+        branch,
+        trashed,
+        trashDir,
+        branchDeleted,
+      })),
+    skipped: outcomes
+      .filter((outcome) => !outcome.removed)
+      .map(({ path, branch, skipped }) => ({ path, branch, reason: skipped ?? 'not removed' })),
+  }
+}
+
 export async function runCleanup(
   repoArg: string | undefined,
   worktreeArgs: string[],
@@ -81,7 +103,7 @@ export async function runCleanup(
 
   if (candidates.length === 0) {
     if (getOutputContext().json) {
-      emitJson({ ok: true, repo: repo.name, removed: [] })
+      emitJson({ ok: true, repo: repo.name, removed: [], skipped: [] })
       return
     }
     log('No removable worktrees found.')
@@ -98,7 +120,7 @@ export async function runCleanup(
     selected = candidates.filter(isSafeToRemove)
     if (selected.length === 0) {
       if (getOutputContext().json) {
-        emitJson({ ok: true, repo: repo.name, removed: [] })
+        emitJson({ ok: true, repo: repo.name, removed: [], skipped: [] })
         return
       }
       log('No merged worktrees to clean up.')
@@ -187,7 +209,7 @@ export async function runCleanup(
   }
 
   if (getOutputContext().json) {
-    emitJson({ ok: true, repo: repo.name, removed: outcomes })
+    emitJson({ ok: true, repo: repo.name, ...partitionOutcomes(outcomes) })
     return
   }
 
@@ -394,7 +416,7 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
   })
 
   if (getOutputContext().json) {
-    emitJson({ ok: true, removed: [outcome], cd: outcome.removed ? gitRoot : null })
+    emitJson({ ok: true, ...partitionOutcomes([outcome]), cd: outcome.removed ? gitRoot : null })
     return
   }
 

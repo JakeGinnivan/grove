@@ -16,6 +16,11 @@ listing at the start of each one.
 Pass `--json` to every `grove` command. Commands, flags, and the cleanup
 safety model are in the `wt-worktree` skill; repo discovery is in `wt-repos`.
 
+After every `grove cleanup`, read the result as that skill's "Reading the
+result" describes. A worktree counts as removed only when its path is in
+`removed`. Carry every `skipped` entry and its reason into the report;
+`ok: true` alone proves nothing was removed.
+
 ## Scope
 
 The user names one repo, or means all of them. For all, take every entry from

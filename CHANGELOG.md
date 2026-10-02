@@ -1,5 +1,23 @@
 # @jakeginnivan/grove
 
+## 0.7.0
+
+### Minor Changes
+
+- 070d090: `grove skills install` can add hints for Claude Code's auto mode to
+  `~/.claude/settings.json`, so the classifier stops blocking `grove cleanup`
+  without `--force`. It is opt-in: a prompt, or `--claude-auto-mode`
+  (`--no-claude-auto-mode` skips it). It keeps `$defaults`, writes through a
+  symlinked settings file, and updates grove's own entries in place on re-run.
+- cf8adbc: `grove cleanup --json` now lists skipped worktrees under `skipped` (with a
+  `reason`) instead of inside `removed`. `removed` holds only worktrees that
+  were actually removed. Previously a skipped worktree appeared in `removed`
+  with `removed: false`, which agents misread as a successful removal.
+
+  The `wt-worktree` skill now explains how to read the result: check each path
+  is in `removed`, report each `skipped` reason, and say where removed
+  worktrees went (`trashDir`).
+
 ## 0.6.0
 
 ### Minor Changes

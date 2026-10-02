@@ -777,9 +777,9 @@ describe('wt cleanup', () => {
       { GROVE_SYSTEM_TRASH: '0' },
     )
     const outcome = result.json<{
-      removed: { removed: boolean; trashed: boolean; trashDir: string | null }[]
+      removed: { trashed: boolean; trashDir: string | null }[]
     }>().removed[0]
-    expect(outcome).toMatchObject({ removed: true, trashed: true })
+    expect(outcome).toMatchObject({ trashed: true })
 
     const trashRoot = join(sandbox.repoPath, '.grove-trash')
     expect(outcome?.trashDir?.startsWith(trashRoot)).toBe(true)

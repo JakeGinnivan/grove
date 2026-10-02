@@ -7,5 +7,6 @@
 were actually removed. Previously a skipped worktree appeared in `removed`
 with `removed: false`, which agents misread as a successful removal.
 
-The `wt-worktree` skill now explains how to read the result. A trash failure
-inside a command sandbox means re-running outside it, not `--no-trash`.
+The `wt-worktree` skill now explains how to read the result: check each path
+is in `removed`, report each `skipped` reason, and say where removed
+worktrees went (`trashDir`).

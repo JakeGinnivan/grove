@@ -75,7 +75,13 @@ function partitionOutcomes(outcomes: RemovalOutcome[]) {
   return {
     removed: outcomes
       .filter((outcome) => outcome.removed)
-      .map(({ path, branch, trashed, branchDeleted }) => ({ path, branch, trashed, branchDeleted })),
+      .map(({ path, branch, trashed, trashDir, branchDeleted }) => ({
+        path,
+        branch,
+        trashed,
+        trashDir,
+        branchDeleted,
+      })),
     skipped: outcomes
       .filter((outcome) => !outcome.removed)
       .map(({ path, branch, skipped }) => ({ path, branch, reason: skipped ?? 'not removed' })),

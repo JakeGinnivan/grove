@@ -362,7 +362,7 @@ directories, and blocks routine cleanups.
 - `autoMode.environment` describes grove and which commands are read-only.
 - `autoMode.allow` allows `grove cleanup` **without** `--force`, which skips
   anything with uncommitted or unpushed work and moves what it removes to the
-  trash. `--force` stays subject to the classifier.
+  trash or `.grove-trash/`. `--force` stays subject to the classifier.
 
 It is opt-in. Answer yes at the prompt, or pass `--claude-auto-mode`. Without
 a TTY nothing changes unless the flag is passed, and `--no-claude-auto-mode`

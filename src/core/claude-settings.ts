@@ -28,7 +28,8 @@ export const AUTO_MODE_HINTS = [
     text:
       'Grove worktree cleanup: `grove cleanup` without `--force` is allowed. It refuses to remove ' +
       'a worktree with uncommitted changes or unpushed commits, and moves what it removes to the ' +
-      'system trash. `--force` discards that work and is not covered by this rule.',
+      'system trash or a `.grove-trash/` folder beside the worktrees. `--force` discards that ' +
+      'work and is not covered by this rule.',
   },
 ] as const
 

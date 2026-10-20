@@ -4,7 +4,7 @@ import {
   extractJiraKey,
   datePrefix,
   generateNames,
-  stripJiraKey,
+  stripIssueKey,
   worktreeDirForBranch,
   repoNameFromUrl,
 } from '../src/core/naming.js'
@@ -73,17 +73,21 @@ describe('datePrefix', () => {
   })
 })
 
-describe('stripJiraKey', () => {
+describe('stripIssueKey', () => {
   it('removes the key and tidies separators', () => {
-    expect(stripJiraKey('ABC-123: fix thing', 'ABC-123')).toBe('fix thing')
+    expect(stripIssueKey('ABC-123: fix thing', 'ABC-123')).toBe('fix thing')
   })
 
   it('is case-insensitive', () => {
-    expect(stripJiraKey('abc-123 fix', 'ABC-123')).toBe('fix')
+    expect(stripIssueKey('abc-123 fix', 'ABC-123')).toBe('fix')
   })
 
   it('leaves the title alone when no key given', () => {
-    expect(stripJiraKey('fix thing')).toBe('fix thing')
+    expect(stripIssueKey('fix thing')).toBe('fix thing')
+  })
+
+  it('removes a GitHub number only with its #', () => {
+    expect(stripIssueKey('#24 bump node to 24', '24')).toBe('bump node to 24')
   })
 })
 
@@ -103,7 +107,7 @@ describe('generateNames', () => {
   it('includes the ticket in both names', () => {
     const names = generateNames({
       title: 'fix login',
-      jiraKey: 'ABC-123',
+      issueKey: 'ABC-123',
       branchPrefix: 'jake/',
       date,
     })
@@ -114,12 +118,24 @@ describe('generateNames', () => {
   it('does not duplicate a ticket already in the title', () => {
     const names = generateNames({
       title: 'ABC-123 fix login',
-      jiraKey: 'ABC-123',
+      issueKey: 'ABC-123',
       branchPrefix: 'jake/',
       date,
     })
     expect(names.branch).toBe('jake/ABC-123-fix-login')
     expect(names.slug).toBe('fix-login')
+  })
+
+  it('puts a GitHub issue number in both names', () => {
+    const names = generateNames({
+      title: 'fix login #42',
+      issueKey: '42',
+      branchPrefix: 'jake/',
+      date,
+    })
+    expect(names.branch).toBe('jake/42-fix-login')
+    expect(names.worktreeDir).toBe('260810-fix-login-42')
+    expect(names.workspaceTitle).toBe('#42 • fix login #42')
   })
 
   it('supports an empty branch prefix', () => {

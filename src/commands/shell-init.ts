@@ -198,6 +198,8 @@ ${commandLines}
               new)
                 _arguments \\
                   '--title[title for the worktree]:title:' \\
+                  '--issue[issue key from a configured task tracker]:key:' \\
+                  '--no-issue[skip the issue prompt]' \\
                   '--jira[Jira issue key]:key:' \\
                   '--on[stack on an existing branch or worktree]:parent:{_grove_describe_from worktrees worktrees "$words[2]"}' \\
                   '--base[explicit base ref]:ref:' \\

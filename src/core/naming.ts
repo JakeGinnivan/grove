@@ -28,7 +28,7 @@ export function datePrefix(date = new Date()): string {
 
 export interface NameInputs {
   title: string
-  jiraKey?: string | undefined
+  issueKey?: string | undefined
   branchPrefix: string
   date?: Date
 }
@@ -45,25 +45,28 @@ export interface GeneratedNames {
  *
  *   branch:   <prefix><KEY->-<slug>     e.g. jake/ABC-1-fix-thing
  *   worktree: <yymmdd>-<slug>[-KEY]     e.g. 260810-fix-thing-ABC-1
+ *
+ * A GitHub issue key is the bare number, giving jake/42-fix-thing.
  */
 export function generateNames({
   title,
-  jiraKey,
+  issueKey,
   branchPrefix,
   date,
 }: NameInputs): GeneratedNames {
-  const slug = slugify(stripJiraKey(title, jiraKey))
+  const slug = slugify(stripIssueKey(title, issueKey))
   if (!slug) {
     throw new Error('Title must contain at least one letter or number.')
   }
   const prefix = datePrefix(date)
 
-  if (jiraKey) {
+  if (issueKey) {
+    const label = /^\d+$/.test(issueKey) ? `#${issueKey}` : issueKey
     return {
       slug,
-      branch: `${branchPrefix}${jiraKey}-${slug}`,
-      worktreeDir: `${prefix}-${slug}-${jiraKey}`,
-      workspaceTitle: `${jiraKey} • ${title}`,
+      branch: `${branchPrefix}${issueKey}-${slug}`,
+      worktreeDir: `${prefix}-${slug}-${issueKey}`,
+      workspaceTitle: `${label} • ${title}`,
     }
   }
   return {
@@ -74,11 +77,13 @@ export function generateNames({
   }
 }
 
-/** Remove the Jira key from a title so it is not duplicated in the slug. */
-export function stripJiraKey(title: string, jiraKey?: string): string {
-  if (!jiraKey) return title
-  const escaped = jiraKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return title.replace(new RegExp(escaped, 'gi'), '').replace(/^[\s\-:]+|[\s\-:]+$/g, '')
+/** Remove the issue key from a title so it is not duplicated in the slug. */
+export function stripIssueKey(title: string, issueKey?: string): string {
+  if (!issueKey) return title
+  const escaped = issueKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // A numeric key only counts with its #, so "bump node to 24" keeps the 24.
+  const pattern = /^\d+$/.test(issueKey) ? `#${escaped}\\b` : escaped
+  return title.replace(new RegExp(pattern, 'gi'), '').replace(/^[\s\-:]+|[\s\-:]+$/g, '')
 }
 
 /** Folder name for an existing branch checked out into a worktree. */

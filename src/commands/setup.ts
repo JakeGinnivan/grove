@@ -8,16 +8,27 @@ import {
   CONFIG_PATH,
   type GroveConfig,
 } from '../core/config.js'
-import { requireText, canPrompt } from '../core/prompts.js'
+import { requireText, canPrompt, multiselect } from '../core/prompts.js'
+import {
+  TASK_TRACKERS,
+  TASK_TRACKER_IDS,
+  parseTrackerList,
+  type TaskTrackerId,
+} from '../core/trackers.js'
+import { WtError } from '../core/errors.js'
 import { emitJson, log, success, getOutputContext } from '../core/output.js'
 import { resolve } from 'node:path'
 
 export function setupCommand(): Command {
   return new Command('setup')
-    .description('Configure grove (branch prefix, clone directory, registry)')
+    .description('Configure grove (branch prefix, clone directory, registry, task trackers)')
     .option('--branch-prefix <prefix>', 'prefix for generated branch names')
     .option('--code-dir <path>', 'default parent directory for clones')
     .option('--repos-file <path>', 'path to the repo registry file')
+    .option(
+      '--task-trackers <list>',
+      `comma-separated trackers to detect issue keys for (${TASK_TRACKER_IDS.join(', ')}), or none`,
+    )
     .option('--show', 'print the current configuration and exit')
     .action(async (options) => {
       await runSetup(options)
@@ -28,6 +39,7 @@ interface SetupOptions {
   branchPrefix?: string
   codeDir?: string
   reposFile?: string
+  taskTrackers?: string
   show?: boolean
 }
 
@@ -45,6 +57,7 @@ async function runSetup(options: SetupOptions): Promise<void> {
     log(`  defaultCodeDir  ${current.defaultCodeDir}`)
     log(`  reposFile       ${current.reposFile}`)
     log(`  useTrash        ${current.useTrash}`)
+    log(`  taskTrackers    ${current.taskTrackers.join(', ') || 'none'}`)
     const profiles = profileList(current)
     if (profiles.length > 0) {
       log()
@@ -90,11 +103,39 @@ async function runSetup(options: SetupOptions): Promise<void> {
     },
   )
 
+  let taskTrackers: TaskTrackerId[]
+  if (options.taskTrackers !== undefined) {
+    const parsed = parseTrackerList(options.taskTrackers)
+    if (typeof parsed === 'string') {
+      throw new WtError(parsed, { code: 'invalid_task_tracker' })
+    }
+    taskTrackers = parsed
+  } else if (interactive) {
+    const chosen = await multiselect(
+      'Task trackers for issue keys (none to skip the prompt in grove new)',
+      TASK_TRACKER_IDS.map((id) => ({
+        value: id,
+        label: TASK_TRACKERS[id].label,
+        hint: TASK_TRACKERS[id].example,
+      })),
+      'Task trackers',
+      current.taskTrackers,
+    )
+    // Keep the configured detection order for trackers that stay enabled.
+    taskTrackers = [
+      ...current.taskTrackers.filter((id) => chosen.includes(id)),
+      ...TASK_TRACKER_IDS.filter((id) => chosen.includes(id) && !current.taskTrackers.includes(id)),
+    ]
+  } else {
+    taskTrackers = current.taskTrackers
+  }
+
   const next: GroveConfig = {
     ...current,
     branchPrefix,
     defaultCodeDir: resolve(expandHome(codeDir)),
     reposFile: resolve(expandHome(reposFile)),
+    taskTrackers,
   }
 
   await saveConfig(next)

@@ -83,6 +83,56 @@ describe('wt new', () => {
     expect(data.branch).toBe('test/ABC-9-fix-login')
   })
 
+  it('takes a GitHub issue number with --issue', async () => {
+    const result = await runCli(
+      ['new', 'demo', '--title', 'fix login', '--issue', '#42', '--json'],
+      sandbox,
+    )
+    const data = result.json<{ path: string; branch: string; issue: unknown }>()
+    expect(data.branch).toBe('test/42-fix-login')
+    expect(data.path).toMatch(/-fix-login-42$/)
+    expect(data.issue).toEqual({ tracker: 'github', key: '42' })
+  })
+
+  it('only infers keys for the configured task trackers', async () => {
+    await runCli(['setup', '--task-trackers', 'github', '--json'], sandbox)
+    const github = await runCli(['new', 'demo', '--title', 'fix #7 login', '--json'], sandbox)
+    expect(github.json<{ branch: string }>().branch).toBe('test/7-fix-login')
+
+    await runCli(['setup', '--task-trackers', 'none', '--json'], sandbox)
+    const none = await runCli(['new', 'demo', '--title', 'ABC-9 other', '--json'], sandbox)
+    expect(none.json<{ branch: string }>().branch).toBe('test/abc-9-other')
+  })
+
+  it('does not prompt for an issue key when no trackers are enabled', async () => {
+    await runCli(['setup', '--task-trackers', 'none', '--json'], sandbox)
+    const result = await runCliWithTty(
+      ['new', 'demo', '--title', 'quiet'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Create this worktree?' },
+    )
+    expect(result.stderr).not.toContain('key (optional)')
+    expect(result.exitCode).toBe(0)
+  }, 30_000)
+
+  it('auto-detects the tracker from a key typed at the prompt', async () => {
+    await runCli(['setup', '--task-trackers', 'jira,github', '--json'], sandbox)
+    const result = await runCliWithTty(
+      ['new', 'demo', '--title', 'typed key', '--yes'],
+      sandbox,
+      { GROVE_SHELL_INTEGRATION: '1' },
+      { answerWhen: 'Issue key (optional)', keys: '#5\r' },
+    )
+    expect(result.stderr).toContain('ABC-123 or #123')
+    expect(result.exitCode).toBe(0)
+    const branch = await gitIn(
+      ['rev-parse', '--abbrev-ref', 'HEAD'],
+      result.stdout.trim().replace('__WT_CD__', ''),
+    )
+    expect(branch).toBe('test/5-typed-key')
+  }, 30_000)
+
   it('fails with needs_input when the title is missing', async () => {
     const result = await runCli(['new', 'demo', '--json'], sandbox)
     expect(result.exitCode).toBe(2)

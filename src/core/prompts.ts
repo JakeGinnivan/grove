@@ -1,4 +1,6 @@
 import * as clack from '@clack/prompts'
+import { GroupMultiSelectPrompt } from '@clack/core'
+import pc from 'picocolors'
 import { CancelledError, NeedsInputError } from './errors.js'
 import { getOutputContext } from './output.js'
 
@@ -214,7 +216,7 @@ export async function multiselect(
   return guard(
     await clack.multiselect({
       ...PROMPT_STREAM,
-      message,
+      message: withToggleAllHint(message),
       options,
       required: false,
       ...(initialValues ? { initialValues } : {}),
@@ -224,8 +226,9 @@ export async function multiselect(
 
 /**
  * A multiselect split under group headings. Keys of `groups` are the
- * headings; toggling a heading toggles every option under it. Empty groups
- * are dropped so no heading appears with nothing beneath it.
+ * headings; toggling a heading toggles every option under it, and `a`
+ * toggles every option. Empty groups are dropped so no heading appears with
+ * nothing beneath it.
  */
 export async function groupMultiselect(
   message: string,
@@ -240,15 +243,61 @@ export async function groupMultiselect(
   if (!canPrompt()) {
     throw new NeedsInputError(what, 'the values as arguments')
   }
-  return guard(
-    await clack.groupMultiselect({
+  const pending = withNextGroupPrompt(bindToggleAll, () =>
+    clack.groupMultiselect({
       ...PROMPT_STREAM,
-      message,
+      message: withToggleAllHint(message),
       options: nonEmpty,
       required: false,
       ...(initialValues ? { initialValues } : {}),
     }),
   )
+  return guard(await pending)
+}
+
+/** clack's flat multiselect binds `a` to select all / none, but never says so. */
+function withToggleAllHint(message: string): string {
+  return `${message} ${pc.dim('(a: all / none)')}`
+}
+
+/**
+ * Run `open` with `setup` applied to the group multiselect it constructs.
+ * clack's `groupMultiselect` builds the prompt and calls `prompt()` on it in
+ * one synchronous step and never hands the instance back, so the only way to
+ * reach it is to intercept that call.
+ */
+function withNextGroupPrompt<T>(
+  setup: (prompt: GroupMultiSelectPrompt<{ value: string }>) => void,
+  open: () => T,
+): T {
+  const proto = GroupMultiSelectPrompt.prototype
+  const original = proto.prompt
+  proto.prompt = function (this: GroupMultiSelectPrompt<{ value: string }>) {
+    proto.prompt = original
+    setup(this)
+    return original.call(this)
+  }
+  try {
+    return open()
+  } finally {
+    proto.prompt = original
+  }
+}
+
+/**
+ * Give the group multiselect the `a` key its flat sibling has: select every
+ * option, or clear them all when every one is already selected.
+ */
+function bindToggleAll(prompt: GroupMultiSelectPrompt<{ value: string }>): void {
+  prompt.on('key', (_char, key) => {
+    if (key?.name !== 'a') return
+    const values = prompt.options
+      .filter((option) => option.group !== true)
+      .map((option) => option.value)
+    const selected = prompt.value ?? []
+    const all = values.every((value) => selected.includes(value))
+    prompt.value = all ? [] : values
+  })
 }
 
 export const spinner =(options: Parameters<typeof clack.spinner>[0] = {}) =>

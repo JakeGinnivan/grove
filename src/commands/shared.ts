@@ -1,4 +1,5 @@
-import { readRegistry } from '../core/registry.js'
+import { readRegistry, gitDirFor, type RepoEntry } from '../core/registry.js'
+import { listWorktrees } from '../core/git.js'
 import { select } from '../core/prompts.js'
 import { WtError } from '../core/errors.js'
 import { Command, Option } from 'commander'
@@ -11,6 +12,7 @@ import type { ViewOptions } from '../core/worktree-view.js'
 export async function pickRepo(
   reposFile: string,
   provided: string | undefined,
+  { worktreeCounts = false }: { worktreeCounts?: boolean } = {},
 ): Promise<string> {
   if (provided) return provided
 
@@ -24,15 +26,31 @@ export async function pickRepo(
   }
   if (canonical.length === 1) return canonical[0]!.name
 
+  const counts = worktreeCounts
+    ? await Promise.all(canonical.map(countWorktrees))
+    : canonical.map(() => undefined)
   return select(
     'Which repo?',
-    canonical.map((entry) => ({
-      value: entry.name,
-      label: entry.name,
-      hint: entry.path,
-    })),
+    canonical.map((entry, index) => {
+      const count = counts[index]
+      return {
+        value: entry.name,
+        label: count === undefined ? entry.name : `${entry.name} (${count})`,
+        hint: entry.path,
+      }
+    }),
     'A repo name',
   )
+}
+
+/** Worktrees besides the main checkout, or undefined when git can't say. */
+async function countWorktrees(entry: RepoEntry): Promise<number | undefined> {
+  try {
+    const worktrees = await listWorktrees(await gitDirFor(entry.path))
+    return Math.max(worktrees.length - 1, 0)
+  } catch {
+    return undefined
+  }
 }
 
 /** The `--sort` and `--group` flags every worktree view shares. */

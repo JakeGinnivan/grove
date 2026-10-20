@@ -952,6 +952,61 @@ describe('wt cleanup', () => {
     const branches = await gitIn(['branch', '--list', branch], sandbox.mainPath)
     expect(branches).toBe('')
   })
+
+  describe('interactive picker', () => {
+    /** One preselected (clean, merged) worktree and one left unselected (dirty). */
+    async function mixedWorktrees(): Promise<string[]> {
+      const clean = await runCli(['new', 'demo', '--title', 'all clean', '--json'], sandbox)
+      const dirty = await runCli(['new', 'demo', '--title', 'all dirty', '--json'], sandbox)
+      const dirtyPath = dirty.json<{ path: string }>().path
+      await writeFile(join(dirtyPath, 'wip.txt'), 'wip\n')
+      return [clean.json<{ path: string }>().path, dirtyPath]
+    }
+
+    it('selects every worktree with a', async () => {
+      const paths = await mixedWorktrees()
+
+      const result = await runCliWithTty(
+        ['cleanup', 'demo', '--dry-run'],
+        sandbox,
+        {},
+        { answerWhen: 'Select worktrees to remove', keys: 'a\r' },
+      )
+
+      expect(result.stderr).toContain('a: all / none')
+      // The prompt itself lists every worktree, so only read past it.
+      const [, wouldRemove] = result.stderr.split('Would remove:')
+      expect(wouldRemove).toBeDefined()
+      for (const path of paths) expect(wouldRemove).toContain(basename(path))
+    }, 30_000)
+
+    it('clears the selection when a is pressed with everything selected', async () => {
+      await mixedWorktrees()
+
+      const result = await runCliWithTty(
+        ['cleanup', 'demo', '--dry-run'],
+        sandbox,
+        {},
+        { answerWhen: 'Select worktrees to remove', keys: 'aa\r' },
+      )
+
+      expect(result.stderr).toContain('Nothing selected.')
+    }, 30_000)
+
+    it('shows each repo\'s worktree count when picking a repo', async () => {
+      await mixedWorktrees()
+      await runCli(['clone', sandbox.remote, 'other', '--no-alias', '--json'], sandbox)
+
+      // Ctrl-C at the repo prompt: only what it rendered matters here.
+      const result = await runCliWithTty(['cleanup'], sandbox, {}, {
+        answerWhen: 'Which repo?',
+        keys: '\x03',
+      })
+
+      expect(result.stderr).toContain('demo (2)')
+      expect(result.stderr).toContain('other (0)')
+    }, 30_000)
+  })
 })
 
 interface InstallTargets {

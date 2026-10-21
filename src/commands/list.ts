@@ -34,7 +34,7 @@ async function runList(
   options: ViewOptions & { status?: boolean },
 ): Promise<void> {
   const config = await loadConfig()
-  const repoName = await pickRepo(config.reposFile, repoArg)
+  const repoName = await pickRepo(config.reposFile, repoArg, { worktreeCounts: true })
   const repo = await resolveRepo(config.reposFile, repoName)
   const gitDir = await gitDirFor(repo.path)
 

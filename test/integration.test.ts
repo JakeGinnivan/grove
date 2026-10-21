@@ -651,6 +651,19 @@ describe('wt list', () => {
     expect(data.worktrees[0]?.isMain).toBe(true)
     expect(data.worktrees.slice(1).map((wt) => wt.path)).toEqual([beta, alpha])
   })
+
+  it('shows each repo\'s worktree count when picking a repo', async () => {
+    await runCli(['new', 'demo', '--title', 'counted', '--json'], sandbox)
+    await runCli(['clone', sandbox.remote, 'other', '--no-alias', '--json'], sandbox)
+
+    const result = await runCliWithTty(['list'], sandbox, {}, {
+      answerWhen: 'Which repo?',
+      keys: '\x03',
+    })
+
+    expect(result.stderr).toContain('demo (1)')
+    expect(result.stderr).toContain('other (0)')
+  })
 })
 
 describe('wt sync', () => {

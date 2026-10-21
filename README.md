@@ -248,8 +248,8 @@ wt cleanup my-service 260810-old --yes   # a specific worktree
 wt cleanup self                          # the worktree you are standing in
 ```
 
-Without a repo, `cleanup` asks which one, showing how many worktrees each
-has. In the multi-select, `a` selects every worktree, or none when they are
+Without a repo, `cleanup` (and `list`) asks which one, showing how many
+worktrees each has. In the multi-select, `a` selects every worktree, or none when they are
 all selected already.
 
 Worktrees with uncommitted changes or unpushed commits are **skipped** unless

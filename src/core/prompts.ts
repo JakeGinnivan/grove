@@ -78,6 +78,7 @@ export async function optionalText(
   options: {
     message: string
     placeholder?: string
+    initialValue?: string
     validate?: (value: string) => string | undefined
   },
 ): Promise<string | undefined> {
@@ -89,6 +90,7 @@ export async function optionalText(
       ...PROMPT_STREAM,
       message: options.message,
       placeholder: options.placeholder,
+      initialValue: options.initialValue,
       validate: (value) => {
         if (!value || !value.trim()) return undefined
         return options.validate?.(value.trim())
@@ -138,6 +140,7 @@ export async function select(
   message: string,
   options: SelectOption[],
   what = 'A selection',
+  initialValue?: string,
 ): Promise<string> {
   if (options.length === 0) {
     throw new CancelledError('Nothing to select.')
@@ -145,7 +148,14 @@ export async function select(
   if (!canPrompt()) {
     throw new NeedsInputError(what, 'the value as an argument')
   }
-  return guard(await clack.select({ ...PROMPT_STREAM, message, options }))
+  return guard(
+    await clack.select({
+      ...PROMPT_STREAM,
+      message,
+      options,
+      ...(initialValue !== undefined ? { initialValue } : {}),
+    }),
+  )
 }
 
 /**

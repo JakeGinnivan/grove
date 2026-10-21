@@ -56,10 +56,20 @@ jumping, so `cd "$(grove pick myrepo)"` remains available.
 
 </details>
 
-Configure paths and your branch prefix:
+Configure paths, your branch prefix, and task trackers:
 
 ```bash
 grove setup
+```
+
+In a terminal this opens a menu of every setting with its current value.
+Pick one to change it, come back to the menu, and choose **Save and exit**
+when done. Ctrl-C inside a setting returns to the menu; Ctrl-C at the menu
+discards your edits. Flags set values without the menu, touching only what
+they name:
+
+```bash
+grove setup --branch-prefix me/ --task-trackers github --no-trash
 ```
 
 ## Usage
@@ -505,7 +515,8 @@ records for worktree directories that are already missing. See the
 
 ## Configuration
 
-`grove setup` writes `~/.config/grove/config.json`:
+`grove setup` writes `~/.config/grove/config.json`; `grove setup --show`
+prints it:
 
 | Key | Meaning |
 | --- | --- |
@@ -514,7 +525,7 @@ records for worktree directories that are already missing. See the
 | `profiles` | Named base directories, each with an optional description and rules |
 | `defaultProfile` | Profile used when `--profile` is not given |
 | `reposFile` | Repo registry location (default `~/.wt_repos`) |
-| `useTrash` | Trash removed worktrees instead of deleting |
+| `useTrash` | Trash removed worktrees instead of deleting (`--trash` / `--no-trash`) |
 | `taskTrackers` | Trackers whose issue keys `grove new` detects and prompts for: any of `jira`, `linear`, `github`, in detection order (default `["jira"]`; `[]` for none). Set with `grove setup --task-trackers github,jira` |
 | `managedClaudePermissions` | Internal ownership record used to revoke only Claude grants Grove added |
 

@@ -55,7 +55,7 @@ function forGitConfig(path: string): string {
  * The includeIf stanzas the global gitconfig needs, as one managed block.
  * With no profiles the block is emitted empty so a prior one is cleared.
  */
-function globalIncludeBlock(profiles: ResolvedProfile[]): string {
+export function globalIncludeBlock(profiles: ResolvedProfile[]): string {
   if (profiles.length === 0) return ''
   const lines = [BEGIN, '# Managed by grove. Edit profiles with `grove profile`.']
   for (const profile of profiles) {
@@ -79,7 +79,7 @@ export function profileGitconfigPath(profile: ResolvedProfile): string {
  * Passing an empty block removes the managed section entirely, which is how
  * deleting the last profile cleans up after itself.
  */
-function spliceManagedBlock(existing: string, block: string): string {
+export function spliceManagedBlock(existing: string, block: string): string {
   const start = existing.indexOf(BEGIN)
   const end = existing.indexOf(END)
 
@@ -221,7 +221,7 @@ async function defaultDirHoldsRepos(config: GroveConfig): Promise<boolean> {
   })
 }
 
-interface ClaudeSettings {
+export interface ClaudeSettings {
   permissions?: {
     additionalDirectories?: string[]
     allow?: string[]
@@ -245,10 +245,7 @@ async function planClaudePermissions(
   const dirs = profileList(config).map((profile) => profile.dir)
   if (await defaultDirHoldsRepos(config)) dirs.push(config.defaultCodeDir)
 
-  const sorted = [...new Set(dirs)].sort()
-  const unique = sorted.filter(
-    (dir) => !sorted.some((other) => other !== dir && dir.startsWith(other + sep)),
-  )
+  const unique = outermostDirs(dirs)
   const previouslyManaged = config.managedClaudePermissions ?? {
     additionalDirectories: [],
     allow: [],
@@ -281,6 +278,45 @@ async function planClaudePermissions(
     }
   }
 
+  const merged = mergeClaudePermissions(settings, unique, previouslyManaged)
+  const contents = `${JSON.stringify(merged.settings, null, 2)}\n`
+
+  return {
+    change: {
+      file: CLAUDE_SETTINGS,
+      kind: 'claude-permissions',
+      description: `Allow reading ${unique.length} code director${unique.length === 1 ? 'y' : 'ies'}`,
+      contents,
+      changed: contents !== existingRaw,
+    },
+    managedPermissions: merged.managed,
+  }
+}
+
+/** Sorted and deduplicated, without any directory already inside another. */
+export function outermostDirs(dirs: string[]): string[] {
+  const sorted = [...new Set(dirs)].sort()
+  return sorted.filter(
+    (dir) => !sorted.some((other) => other !== dir && dir.startsWith(other + sep)),
+  )
+}
+
+export interface ManagedPermissions {
+  additionalDirectories: string[]
+  allow: string[]
+}
+
+/**
+ * Grant read access to `dirs` in Claude's settings. Grants grove made last
+ * time (`previouslyManaged`) are revoked first, so a removed profile loses
+ * its access, while grants the user added by hand are kept and never become
+ * grove's to revoke. Returns the new settings and the grants grove now owns.
+ */
+export function mergeClaudePermissions(
+  settings: ClaudeSettings,
+  dirs: string[],
+  previouslyManaged: ManagedPermissions,
+): { settings: ClaudeSettings; managed: ManagedPermissions } {
   const permissions = { ...(settings.permissions ?? {}) }
   const additional = new Set(
     Array.isArray(permissions.additionalDirectories)
@@ -302,7 +338,7 @@ async function planClaudePermissions(
   }
   const managedAdditionalDirectories: string[] = []
   const managedAllow: string[] = []
-  for (const dir of unique) {
+  for (const dir of dirs) {
     if (!additional.has(dir)) {
       additional.add(dir)
       managedAdditionalDirectories.push(dir)
@@ -318,18 +354,9 @@ async function planClaudePermissions(
   // settings.json.
   permissions.additionalDirectories = [...additional].sort()
   permissions.allow = [...allow].sort()
-  const next: ClaudeSettings = { ...settings, permissions }
-  const contents = `${JSON.stringify(next, null, 2)}\n`
-
   return {
-    change: {
-      file: CLAUDE_SETTINGS,
-      kind: 'claude-permissions',
-      description: `Allow reading ${unique.length} code director${unique.length === 1 ? 'y' : 'ies'}`,
-      contents,
-      changed: contents !== existingRaw,
-    },
-    managedPermissions: {
+    settings: { ...settings, permissions },
+    managed: {
       additionalDirectories: managedAdditionalDirectories.sort(),
       allow: managedAllow.sort(),
     },

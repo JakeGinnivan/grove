@@ -214,6 +214,23 @@ async function assignedSlot(worktreePath: string): Promise<number | undefined> {
   return slot
 }
 
+/** The lowest of slots 1..`slots` that no other worktree holds. */
+export function firstFreeSlot(used: ReadonlySet<number>, slots: number): number | undefined {
+  for (let candidate = 1; candidate <= slots; candidate++) {
+    if (!used.has(candidate)) return candidate
+  }
+  return undefined
+}
+
+/**
+ * The slot to share once all are taken: the one after the last shared, so
+ * overflow spreads round every slot in turn rather than piling onto one. A
+ * missing or corrupt record starts again from slot 1.
+ */
+export function nextOverflowSlot(last: number, slots: number): number {
+  return (Number.isSafeInteger(last) && last >= 0 ? last % slots : 0) + 1
+}
+
 export async function assignPortSlot(
   mainPath: string,
   worktreePath: string,
@@ -229,18 +246,16 @@ export async function assignPortSlot(
   let slot = isMain ? 0 : await assignedSlot(worktreePath)
   let duplicate = false
   if (slot === undefined) {
-    const used = new Map<number, number>()
+    const used = new Set<number>()
     for (const wt of worktrees.slice(1)) {
       if (resolve(wt.path) === resolve(worktreePath)) continue
       const other = await assignedSlot(wt.path)
-      if (other !== undefined) used.set(other, (used.get(other) ?? 0) + 1)
+      if (other !== undefined) used.add(other)
     }
-    for (let candidate = 1; candidate <= layout.worktreeSlots; candidate++) {
-      if (!used.has(candidate)) { slot = candidate; break }
-    }
+    slot = firstFreeSlot(used, layout.worktreeSlots)
     if (slot === undefined) {
       const last = Number((await getConfig(mainPath, OVERFLOW_KEY)) ?? '0')
-      slot = (Number.isSafeInteger(last) && last >= 0 ? last % layout.worktreeSlots : 0) + 1
+      slot = nextOverflowSlot(last, layout.worktreeSlots)
       await setConfig(mainPath, OVERFLOW_KEY, String(slot))
       duplicate = true
     }

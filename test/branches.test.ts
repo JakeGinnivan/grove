@@ -89,18 +89,14 @@ describe('listBranches', () => {
     expect(branches.find((branch) => branch.name === 'main')?.source).toBe('local')
   })
 
-  it('lists a branch once when it exists both locally and on the remote', async () => {
-    await git(['checkout', '-b', 'older', 'origin/older'], clone)
-    const branches = await listBranches(clone)
-    expect(branches.filter((branch) => branch.name === 'older')).toHaveLength(1)
-  })
-
-  it('prefers the local ref when a branch exists on both sides', async () => {
+  it('lists a branch on both sides once, as the local ref', async () => {
     // Local tip is older than origin's, so the local ref only wins if the
     // shadowing rule is about which ref checkout resolves to, not recency.
     await git(['checkout', '-b', 'older', 'origin/older'], clone)
     const branches = await listBranches(clone)
-    expect(branches.find((branch) => branch.name === 'older')?.source).toBe('local')
+    const older = branches.filter((branch) => branch.name === 'older')
+    expect(older).toHaveLength(1)
+    expect(older[0]?.source).toBe('local')
   })
 
   it('excludes origin/HEAD so it does not surface as a branch', async () => {

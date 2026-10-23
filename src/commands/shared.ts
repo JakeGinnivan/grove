@@ -1,7 +1,13 @@
 import { readRegistry, gitDirFor, type RepoEntry } from '../core/registry.js'
 import { listWorktrees } from '../core/git.js'
-import { select } from '../core/prompts.js'
-import { WtError } from '../core/errors.js'
+import { select, canPrompt } from '../core/prompts.js'
+import { WtError, NeedsInputError } from '../core/errors.js'
+import {
+  profileList,
+  getProfile,
+  type GroveConfig,
+  type ResolvedProfile,
+} from '../core/config.js'
 import { Command, Option } from 'commander'
 import type { ViewOptions } from '../core/worktree-view.js'
 
@@ -51,6 +57,44 @@ async function countWorktrees(entry: RepoEntry): Promise<number | undefined> {
   } catch {
     return undefined
   }
+}
+
+/**
+ * Decide which profile a new repo belongs to, for `clone` and `create` alike:
+ * --profile wins, then the only profile, then the configured default, then a
+ * prompt when several exist and we can ask.
+ */
+export async function chooseProfile(
+  config: GroveConfig,
+  requested: string | undefined,
+): Promise<ResolvedProfile | undefined> {
+  if (requested) return getProfile(config, requested)
+
+  const profiles = profileList(config)
+  if (profiles.length === 0) return undefined
+  if (profiles.length === 1) return profiles[0]
+
+  if (config.defaultProfile) {
+    return getProfile(config, config.defaultProfile)
+  }
+
+  if (!canPrompt()) {
+    throw new NeedsInputError(
+      `A profile is required (${profiles.length} configured, no default set)`,
+      `--profile <${profiles.map((p) => p.name).join('|')}>`,
+    )
+  }
+
+  const chosen = await select(
+    'Which profile should this repo live in?',
+    profiles.map((profile) => ({
+      value: profile.name,
+      label: profile.name,
+      hint: profile.description ?? profile.dir,
+    })),
+    'A profile name',
+  )
+  return getProfile(config, chosen)
 }
 
 /** The `--sort` and `--group` flags every worktree view shares. */

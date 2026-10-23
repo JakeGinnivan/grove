@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, rm, mkdir, writeFile, realpath } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, writeFile, realpath, cp, readFile } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -105,15 +106,45 @@ export async function commitAt(
 /**
  * Build a realistic repo: a bare "remote" plus a clone laid out the way `wt`
  * expects (<repo>/main), with the registry pre-populated.
+ *
+ * Building one takes a dozen git processes, about a quarter of a second, and
+ * nearly every test wants a fresh one. So each is built once per worker as a
+ * template and copied, with the few files that record its absolute path
+ * rewritten to the copy's.
  */
 export async function createSandbox(name = 'demo'): Promise<Sandbox> {
-  // realpath because macOS puts temp dirs behind the /tmp -> /private/tmp
-  // symlink, and git reports worktree paths already resolved.
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'wt-test-')))
-  const remote = join(root, `${name}.git`)
-  const repoPath = join(root, 'code', name)
-  const mainPath = join(repoPath, 'main')
-  const reposFile = join(root, 'repos')
+  let template = templates.get(name)
+  if (!template) {
+    template = buildSandbox(name)
+    templates.set(name, template)
+  }
+  const source = await template
+
+  const root = await tempRoot('wt-test-')
+  await cp(source.root, root, { recursive: true, preserveTimestamps: true })
+  const sandbox = sandboxAt(root, name)
+  for (const file of [
+    sandbox.reposFile,
+    join(sandbox.mainPath, '.git', 'config'),
+    join(root, 'seed', '.git', 'config'),
+  ]) {
+    const text = await readFile(file, 'utf8')
+    await writeFile(file, text.replaceAll(source.root, root))
+  }
+  return sandbox
+}
+
+const templates = new Map<string, Promise<Sandbox>>()
+const templateRoots: string[] = []
+
+process.on('exit', () => {
+  for (const root of templateRoots) rmSync(root, { recursive: true, force: true })
+})
+
+async function buildSandbox(name: string): Promise<Sandbox> {
+  const root = await tempRoot('wt-template-')
+  templateRoots.push(root)
+  const { remote, repoPath, mainPath, reposFile } = sandboxAt(root, name)
 
   await mkdir(remote, { recursive: true })
   await execFileAsync(
@@ -142,13 +173,25 @@ export async function createSandbox(name = 'demo'): Promise<Sandbox> {
   await git(['remote', 'set-head', 'origin', '--auto'], mainPath)
 
   await writeFile(reposFile, `${name} ${repoPath}\n`)
+  return sandboxAt(root, name)
+}
 
+/**
+ * realpath because macOS puts temp dirs behind the /tmp -> /private/tmp
+ * symlink, and git reports worktree paths already resolved.
+ */
+async function tempRoot(prefix: string): Promise<string> {
+  return realpath(await mkdtemp(join(tmpdir(), prefix)))
+}
+
+function sandboxAt(root: string, name: string): Sandbox {
+  const repoPath = join(root, 'code', name)
   return {
     root,
-    remote,
+    remote: join(root, `${name}.git`),
     repoPath,
-    mainPath,
-    reposFile,
+    mainPath: join(repoPath, 'main'),
+    reposFile: join(root, 'repos'),
     cleanup: () => rm(root, { recursive: true, force: true }),
   }
 }

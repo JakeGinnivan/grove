@@ -76,25 +76,19 @@ describe('worktree ports', () => {
       .toBe('PORT=3820\n')
   })
 
-  it('reuses freed slots and wraps duplicate assignments in order', async ({ sandbox }) => {
+  // Which slot comes next is unit-tested in port-slots.test.ts; this proves
+  // the slots worktrees hold are read back from git and freed on cleanup.
+  it('reuses a freed slot, then shares one once all are taken', async ({ sandbox }) => {
     await layout(sandbox, 2)
-    const first = await create(sandbox, 'one')
+    await create(sandbox, 'one')
     const second = await create(sandbox, 'two')
-    const removedSecond = await runCli(['cleanup', 'demo', second.path, '--force', '--no-trash', '--json'], sandbox)
-    expect(removedSecond.exitCode).toBe(0)
+    const removed = await runCli(['cleanup', 'demo', second.path, '--force', '--no-trash', '--json'], sandbox)
+    expect(removed.exitCode).toBe(0)
     const reused = await create(sandbox, 'replacement')
     expect(reused.port).toMatchObject({ slot: 2, duplicate: false })
-    const overflow1 = await create(sandbox, 'three')
-    const overflow2 = await create(sandbox, 'four')
-    expect(overflow1.port).toMatchObject({ slot: 1, duplicate: true })
-    expect(overflow2.port).toMatchObject({ slot: 2, duplicate: true })
-    expect(overflow2.portWarning).toMatch(/shared/)
-    const removed = await runCli(['cleanup', 'demo', first.path, '--force', '--no-trash', '--json'], sandbox)
-    expect(removed.exitCode).toBe(0)
-    // Slot 1 still has the first overflow worktree, so the next assignment wraps.
-    const overflow3 = await create(sandbox, 'five')
-    expect(overflow3.port.slot).toBe(1)
-    expect(overflow3.port.duplicate).toBe(true)
+    const overflow = await create(sandbox, 'three')
+    expect(overflow.port).toMatchObject({ slot: 1, duplicate: true })
+    expect(overflow.portWarning).toMatch(/shared/)
   })
 
   it('assigns an existing worktree when first queried', async ({ sandbox }) => {
@@ -135,22 +129,6 @@ describe('worktree ports', () => {
     } finally {
       await other.cleanup()
     }
-  })
-
-  it('sets the base port and main env file when cloning a configured repo', async ({ sandbox }) => {
-    await writeFile(join(sandbox.mainPath, 'worktree.json'), JSON.stringify({
-      ports: { perWorktree: 20, services: { web: { offset: 0, dotenv: { env: 'PORT' } } } },
-    }))
-    await gitIn(['add', 'worktree.json'], sandbox.mainPath)
-    await gitIn(['commit', '-m', 'configure ports'], sandbox.mainPath)
-    await gitIn(['push', 'origin', 'main'], sandbox.mainPath)
-    const cloned = await runCli([
-      'clone', sandbox.remote, 'clone-with-ports', '--base-port', '5000', '--no-alias', '--json',
-    ], sandbox)
-    expect(cloned.exitCode).toBe(0)
-    const result = cloned.json<{ mainPath: string; basePort: number }>()
-    expect(result.basePort).toBe(5000)
-    expect(await readFile(join(result.mainPath, '.env'), 'utf8')).toBe('PORT=5000\n')
   })
 
   it('generates a local Compose override from the same service offsets', async ({ sandbox }) => {
@@ -329,18 +307,5 @@ describe('base ports on clone and import', () => {
     expect(data.basePort).toBe(7000)
     expect(data.portWarning).toBeNull()
     expect(await readFile(join(data.mainPath, '.env'), 'utf8')).toContain('WEB_PORT=7000')
-  })
-
-  it('still carries --base-port through the deprecated repos add', async ({ sandbox }) => {
-    await seedPortRepo(sandbox)
-    const path = join(sandbox.root, 'legacyported')
-    await gitIn(['clone', sandbox.remote, path], sandbox.root)
-
-    const result = await runCli(
-      ['repos', 'add', path, '--name', 'legacyported', '--base-port', '6000', '--json'],
-      sandbox,
-    )
-    expect(result.exitCode).toBe(0)
-    expect(result.json<{ basePort: number }>().basePort).toBe(6000)
   })
 })

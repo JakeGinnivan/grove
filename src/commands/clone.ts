@@ -6,11 +6,7 @@ import { mkdir } from 'node:fs/promises'
 import {
   loadConfig,
   expandHome,
-  profileList,
-  getProfile,
   codeDirFor,
-  type ResolvedProfile,
-  type GroveConfig,
 } from '../core/config.js'
 import {
   registryIdentifierProblem,
@@ -20,10 +16,11 @@ import {
 import { repoNameFromUrl } from '../core/naming.js'
 import { canonical } from '../core/paths.js'
 import { git } from '../core/git.js'
-import { optionalText, requireText, select, canPrompt } from '../core/prompts.js'
+import { optionalText, requireText, canPrompt } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, info, warn, getOutputContext } from '../core/output.js'
 import { configureBasePort, generatePortFiles, portsForWorktree, readPortLayout } from '../core/ports.js'
-import { WtError, NeedsInputError } from '../core/errors.js'
+import { WtError } from '../core/errors.js'
+import { chooseProfile } from './shared.js'
 
 export function cloneCommand(): Command {
   return new Command('clone')
@@ -45,44 +42,6 @@ interface CloneOptions {
   alias?: string | false
   dir?: string
   basePort?: string
-}
-
-/**
- * Decide which profile a clone belongs to:
- *   --profile wins, then the configured default, then a prompt when several
- *   exist and we can ask.
- */
-async function chooseProfile(
-  config: GroveConfig,
-  requested: string | undefined,
-): Promise<ResolvedProfile | undefined> {
-  if (requested) return getProfile(config, requested)
-
-  const profiles = profileList(config)
-  if (profiles.length === 0) return undefined
-  if (profiles.length === 1) return profiles[0]
-
-  if (config.defaultProfile) {
-    return getProfile(config, config.defaultProfile)
-  }
-
-  if (!canPrompt()) {
-    throw new NeedsInputError(
-      `A profile is required (${profiles.length} configured, no default set)`,
-      `--profile <${profiles.map((p) => p.name).join('|')}>`,
-    )
-  }
-
-  const chosen = await select(
-    'Which profile should this repo live in?',
-    profiles.map((profile) => ({
-      value: profile.name,
-      label: profile.name,
-      hint: profile.description ?? profile.dir,
-    })),
-    'A profile name',
-  )
-  return getProfile(config, chosen)
 }
 
 async function runClone(

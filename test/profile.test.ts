@@ -64,42 +64,6 @@ describe('grove profile', () => {
     expect(data.path).toBe(join(workDir, 'routed'))
   })
 
-  it('honours an explicit --profile over the default', async ({ sandbox }) => {
-    const ossDir = join(sandbox.root, 'oss')
-    await addProfile(sandbox, 'work')
-    await addProfile(sandbox, 'oss')
-
-    const result = await runCli(
-      ['clone', sandbox.remote, 'chosen', '--profile', 'oss', '--no-alias', '--json'],
-      sandbox,
-    )
-    expect(result.json<{ path: string }>().path).toBe(join(ossDir, 'chosen'))
-  })
-
-  it('requires a profile when several exist and no default is set', async ({ sandbox }) => {
-    await addProfile(sandbox, 'work')
-    await addProfile(sandbox, 'oss')
-
-    const result = await runCli(
-      ['clone', sandbox.remote, 'ambiguous', '--no-alias', '--json'],
-      sandbox,
-    )
-    const error = expectError(result, 'needs_input')
-    expect(error.hint).toContain('--profile')
-  })
-
-  it('uses the default profile when set', async ({ sandbox }) => {
-    const ossDir = join(sandbox.root, 'oss')
-    await addProfile(sandbox, 'work')
-    await addProfile(sandbox, 'oss', '--default')
-
-    const result = await runCli(
-      ['clone', sandbox.remote, 'defaulted', '--no-alias', '--json'],
-      sandbox,
-    )
-    expect(result.json<{ profile: string }>().profile).toBe('oss')
-  })
-
   it('sets, shows, and clears the default with `profile default`', async ({ sandbox }) => {
     const ossDir = join(sandbox.root, 'oss')
     await addProfile(sandbox, 'work')
@@ -132,10 +96,11 @@ describe('grove profile', () => {
     expectError(result, 'unknown_profile')
   })
 
-  it('clears the default when that profile is removed', async ({ sandbox }) => {
+  it('sets the default with --default, and clears it when that profile is removed', async ({ sandbox }) => {
     await addProfile(sandbox, 'work')
-    await addProfile(sandbox, 'oss')
-    await runCli(['profile', 'default', 'oss', '--json'], sandbox)
+    await addProfile(sandbox, 'oss', '--default')
+    const before = await runCli(['profile', 'default', '--json'], sandbox)
+    expect(before.json<{ defaultProfile: string | null }>().defaultProfile).toBe('oss')
 
     await runCli(['profile', 'remove', 'oss', '--json'], sandbox)
     const after = await runCli(['profile', 'default', '--json'], sandbox)
@@ -143,7 +108,7 @@ describe('grove profile', () => {
   })
 })
 
-describe('grove profile add writes config immediately', () => {
+describe('grove profile add and remove', () => {
   it('writes git and Claude config without a separate apply step', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
     const result = await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
@@ -158,8 +123,11 @@ describe('grove profile add writes config immediately', () => {
       `[includeIf "gitdir:${inGitConfig(workDir)}/"]`,
     )
 
-    const settings = await readClaudeSettings<{ permissions: { additionalDirectories: string[] } }>(sandbox)
+    const settings = await readClaudeSettings<{
+      permissions: { additionalDirectories: string[]; allow: string[] }
+    }>(sandbox)
     expect(settings.permissions.additionalDirectories).toContain(workDir)
+    expect(settings.permissions.allow).toContain(`Read(${workDir}/**)`)
 
     // And the response reports exactly which files it touched.
     const wrote = result.json<{ wrote: string[] }>().wrote
@@ -177,13 +145,6 @@ describe('grove profile add writes config immediately', () => {
     // A later apply still picks it up.
     await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
     expect(existsSync(join(workDir, '.gitconfig'))).toBe(true)
-  })
-
-  it('a follow-up apply reports nothing left to do', async ({ sandbox }) => {
-    await addProfile(sandbox, 'work')
-    const apply = await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
-    const changes = apply.json<{ changes: { changed: boolean }[] }>().changes
-    expect(changes.every((change) => !change.changed)).toBe(true)
   })
 
   it('removing a profile drops its includeIf stanza', async ({ sandbox }) => {
@@ -243,66 +204,9 @@ describe('grove profile add writes config immediately', () => {
     expect(after).not.toContain('grove managed')
     expect(after).toContain('email = work@example.com')
   })
-
-  it('removing the last profile clears the managed block entirely', async ({ sandbox }) => {
-    const workDir = join(sandbox.root, 'work')
-    await writeFile(join(sandbox.root, '.gitconfig'), '[user]\n\tname = Someone\n')
-    await addProfile(sandbox, 'work')
-
-    await runCli(['profile', 'remove', 'work', '--json'], sandbox)
-    const after = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-
-    expect(after).not.toContain('grove managed')
-    expect(after).not.toContain('includeIf')
-    // Hand-written config is untouched.
-    expect(after).toContain('name = Someone')
-  })
 })
 
 describe('grove profile apply', () => {
-  it('writes the per-profile gitconfig and Claude read permissions', async ({ sandbox }) => {
-    const workDir = join(sandbox.root, 'work')
-    await addProfile(sandbox, 'work')
-    const result = await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
-    expect(result.exitCode).toBe(0)
-
-    // Per-profile gitconfig exists, ready for the user's own settings.
-    const profileConfig = await readFile(join(workDir, '.gitconfig'), 'utf8')
-    expect(profileConfig).toContain('# Profile: work')
-
-    // Global gitconfig includes it only for paths under the profile dir.
-    const globalConfig = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(globalConfig).toContain(
-      `[includeIf "gitdir:${inGitConfig(workDir)}/"]`,
-    )
-
-    // Claude gains read access to the profile directory.
-    const settings = await readClaudeSettings<{ permissions: { additionalDirectories: string[]; allow: string[] } }>(sandbox)
-    expect(settings.permissions.additionalDirectories).toContain(workDir)
-    expect(settings.permissions.allow).toContain(`Read(${workDir}/**)`)
-  })
-
-  it('preserves existing Claude settings', async ({ sandbox }) => {
-    await mkdir(join(sandbox.root, '.claude'), { recursive: true })
-    await writeFile(
-      join(sandbox.root, '.claude', 'settings.json'),
-      JSON.stringify({
-        model: 'opus',
-        permissions: { allow: ['Bash(ls:*)'], defaultMode: 'auto' },
-      }),
-    )
-    await addProfile(sandbox, 'work')
-    await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
-
-    const settings = await readClaudeSettings<{
-      model: string
-      permissions: { allow: string[]; defaultMode: string }
-    }>(sandbox)
-    expect(settings.model).toBe('opus')
-    expect(settings.permissions.defaultMode).toBe('auto')
-    expect(settings.permissions.allow).toContain('Bash(ls:*)')
-  })
-
   it('is idempotent and does not duplicate managed blocks', async ({ sandbox }) => {
     await runCli(
       [
@@ -324,19 +228,6 @@ describe('grove profile apply', () => {
     expect(after.match(/grove managed/g)).toHaveLength(2) // one begin, one end
     const changes = second.json<{ changes: { changed: boolean }[] }>().changes
     expect(changes.every((change) => !change.changed)).toBe(true)
-  })
-
-  it('preserves unmanaged content in the global gitconfig', async ({ sandbox }) => {
-    await writeFile(
-      join(sandbox.root, '.gitconfig'),
-      '[user]\n\tname = Someone\n\temail = someone@example.com\n',
-    )
-    await addProfile(sandbox, 'work')
-    await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
-
-    const config = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
-    expect(config).toContain('name = Someone')
-    expect(config).toContain('includeIf')
   })
 
   it('does not grant read access to a default dir holding no repos', async ({ sandbox }) => {

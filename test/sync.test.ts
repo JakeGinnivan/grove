@@ -1,28 +1,20 @@
 import { describe, expect } from 'vitest'
 import { existsSync } from 'node:fs'
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   runCli,
   gitIn,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { pushCommit } from './helpers/grove.js'
 
 describe('wt sync', () => {
   it('fast-forwards main when new commits land upstream', async ({ sandbox }) => {
-    const helper = join(sandbox.root, 'pusher')
-    await mkdir(helper, { recursive: true })
-    await gitIn(['clone', sandbox.remote, helper], sandbox.root)
-    await gitIn(['config', 'user.email', 't@e.com'], helper)
-    await gitIn(['config', 'user.name', 'T'], helper)
-    await writeFile(join(helper, 'new.txt'), 'new\n')
-    await gitIn(['add', '.'], helper)
-    await gitIn(['commit', '-m', 'upstream work'], helper)
-    await gitIn(['push'], helper)
+    const pushed = await pushCommit(sandbox, { file: 'new.txt' })
 
     // Guard the setup: if the push did not land, the sync assertions below
     // would fail for a reason that has nothing to do with sync.
-    const pushed = await gitIn(['rev-parse', 'HEAD'], helper)
     const onRemote = await gitIn(['rev-parse', 'main'], sandbox.remote)
     expect(onRemote).toBe(pushed)
 

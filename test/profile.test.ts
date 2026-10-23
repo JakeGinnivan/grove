@@ -7,6 +7,7 @@ import {
   gitWithGlobalConfig,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { expectError, addProfile, readClaudeSettings } from './helpers/grove.js'
 
 /**
  * grove spells paths with forward slashes inside git config files, because
@@ -53,7 +54,7 @@ describe('grove profile', () => {
 
   it('uses the only profile when just one is configured', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     const result = await runCli(
       ['clone', sandbox.remote, 'routed', '--no-alias', '--json'],
       sandbox,
@@ -65,8 +66,8 @@ describe('grove profile', () => {
 
   it('honours an explicit --profile over the default', async ({ sandbox }) => {
     const ossDir = join(sandbox.root, 'oss')
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss')
 
     const result = await runCli(
       ['clone', sandbox.remote, 'chosen', '--profile', 'oss', '--no-alias', '--json'],
@@ -76,23 +77,21 @@ describe('grove profile', () => {
   })
 
   it('requires a profile when several exist and no default is set', async ({ sandbox }) => {
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', join(sandbox.root, 'oss'), '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss')
 
     const result = await runCli(
       ['clone', sandbox.remote, 'ambiguous', '--no-alias', '--json'],
       sandbox,
     )
-    expect(result.exitCode).toBe(2)
-    const error = result.json<{ error: { code: string; hint: string } }>().error
-    expect(error.code).toBe('needs_input')
+    const error = expectError(result, 'needs_input')
     expect(error.hint).toContain('--profile')
   })
 
   it('uses the default profile when set', async ({ sandbox }) => {
     const ossDir = join(sandbox.root, 'oss')
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', ossDir, '--default', '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss', '--default')
 
     const result = await runCli(
       ['clone', sandbox.remote, 'defaulted', '--no-alias', '--json'],
@@ -103,8 +102,8 @@ describe('grove profile', () => {
 
   it('sets, shows, and clears the default with `profile default`', async ({ sandbox }) => {
     const ossDir = join(sandbox.root, 'oss')
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss')
 
     // Nothing set yet.
     const initial = await runCli(['profile', 'default', '--json'], sandbox)
@@ -128,17 +127,14 @@ describe('grove profile', () => {
   })
 
   it('rejects an unknown profile as the default', async ({ sandbox }) => {
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     const result = await runCli(['profile', 'default', 'nope', '--json'], sandbox)
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe(
-      'unknown_profile',
-    )
+    expectError(result, 'unknown_profile')
   })
 
   it('clears the default when that profile is removed', async ({ sandbox }) => {
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', join(sandbox.root, 'oss'), '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss')
     await runCli(['profile', 'default', 'oss', '--json'], sandbox)
 
     await runCli(['profile', 'remove', 'oss', '--json'], sandbox)
@@ -150,10 +146,7 @@ describe('grove profile', () => {
 describe('grove profile add writes config immediately', () => {
   it('writes git and Claude config without a separate apply step', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
-    const result = await runCli(
-      ['profile', 'add', 'work', workDir, '--json'],
-      sandbox,
-    )
+    const result = await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
     expect(result.exitCode).toBe(0)
 
     // The files exist straight away — no `profile apply` was run.
@@ -165,9 +158,7 @@ describe('grove profile add writes config immediately', () => {
       `[includeIf "gitdir:${inGitConfig(workDir)}/"]`,
     )
 
-    const settings = JSON.parse(
-      await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
-    ) as { permissions: { additionalDirectories: string[] } }
+    const settings = await readClaudeSettings<{ permissions: { additionalDirectories: string[] } }>(sandbox)
     expect(settings.permissions.additionalDirectories).toContain(workDir)
 
     // And the response reports exactly which files it touched.
@@ -178,10 +169,7 @@ describe('grove profile add writes config immediately', () => {
 
   it('leaves config alone with --no-apply', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
-    const result = await runCli(
-      ['profile', 'add', 'work', workDir, '--no-apply', '--json'],
-      sandbox,
-    )
+    const result = await runCli(['profile', 'add', 'work', workDir, '--no-apply', '--json'], sandbox)
     expect(result.json<{ wrote: string[] }>().wrote).toEqual([])
     expect(existsSync(join(workDir, '.gitconfig'))).toBe(false)
     expect(existsSync(join(sandbox.root, '.claude', 'settings.json'))).toBe(false)
@@ -192,10 +180,7 @@ describe('grove profile add writes config immediately', () => {
   })
 
   it('a follow-up apply reports nothing left to do', async ({ sandbox }) => {
-    await runCli(
-      ['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'],
-      sandbox,
-    )
+    await addProfile(sandbox, 'work')
     const apply = await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
     const changes = apply.json<{ changes: { changed: boolean }[] }>().changes
     expect(changes.every((change) => !change.changed)).toBe(true)
@@ -204,8 +189,8 @@ describe('grove profile add writes config immediately', () => {
   it('removing a profile drops its includeIf stanza', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
     const ossDir = join(sandbox.root, 'oss')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss')
     expect(await readFile(join(sandbox.root, '.gitconfig'), 'utf8')).toContain(
       `gitdir:${inGitConfig(workDir)}/`,
     )
@@ -230,12 +215,10 @@ describe('grove profile add writes config immediately', () => {
       }),
     )
 
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     await runCli(['profile', 'remove', 'work', '--json'], sandbox)
 
-    const settings = JSON.parse(
-      await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
-    ) as { permissions: { additionalDirectories: string[]; allow: string[] } }
+    const settings = await readClaudeSettings<{ permissions: { additionalDirectories: string[]; allow: string[] } }>(sandbox)
     expect(settings.permissions.additionalDirectories).not.toContain(workDir)
     expect(settings.permissions.allow).not.toContain(`Read(${workDir}/**)`)
     expect(settings.permissions.additionalDirectories).toContain('/user-owned')
@@ -244,7 +227,7 @@ describe('grove profile add writes config immediately', () => {
 
   it('removing a profile strips the managed block but keeps hand-written config', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
 
     const profileConfig = join(workDir, '.gitconfig')
     expect(await readFile(profileConfig, 'utf8')).toContain('grove managed')
@@ -264,7 +247,7 @@ describe('grove profile add writes config immediately', () => {
   it('removing the last profile clears the managed block entirely', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
     await writeFile(join(sandbox.root, '.gitconfig'), '[user]\n\tname = Someone\n')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
 
     await runCli(['profile', 'remove', 'work', '--json'], sandbox)
     const after = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
@@ -279,7 +262,7 @@ describe('grove profile add writes config immediately', () => {
 describe('grove profile apply', () => {
   it('writes the per-profile gitconfig and Claude read permissions', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     const result = await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
     expect(result.exitCode).toBe(0)
 
@@ -294,9 +277,7 @@ describe('grove profile apply', () => {
     )
 
     // Claude gains read access to the profile directory.
-    const settings = JSON.parse(
-      await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
-    ) as { permissions: { additionalDirectories: string[]; allow: string[] } }
+    const settings = await readClaudeSettings<{ permissions: { additionalDirectories: string[]; allow: string[] } }>(sandbox)
     expect(settings.permissions.additionalDirectories).toContain(workDir)
     expect(settings.permissions.allow).toContain(`Read(${workDir}/**)`)
   })
@@ -310,15 +291,13 @@ describe('grove profile apply', () => {
         permissions: { allow: ['Bash(ls:*)'], defaultMode: 'auto' },
       }),
     )
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
 
-    const settings = JSON.parse(
-      await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
-    ) as {
+    const settings = await readClaudeSettings<{
       model: string
       permissions: { allow: string[]; defaultMode: string }
-    }
+    }>(sandbox)
     expect(settings.model).toBe('opus')
     expect(settings.permissions.defaultMode).toBe('auto')
     expect(settings.permissions.allow).toContain('Bash(ls:*)')
@@ -352,7 +331,7 @@ describe('grove profile apply', () => {
       join(sandbox.root, '.gitconfig'),
       '[user]\n\tname = Someone\n\temail = someone@example.com\n',
     )
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
 
     const config = await readFile(join(sandbox.root, '.gitconfig'), 'utf8')
@@ -365,12 +344,10 @@ describe('grove profile apply', () => {
     // there, so <root>/code is legitimately included; a profile elsewhere
     // must not drag in unrelated directories.
     const workDir = join(sandbox.root, 'work')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
 
-    const settings = JSON.parse(
-      await readFile(join(sandbox.root, '.claude', 'settings.json'), 'utf8'),
-    ) as { permissions: { additionalDirectories: string[] } }
+    const settings = await readClaudeSettings<{ permissions: { additionalDirectories: string[] } }>(sandbox)
     const dirs = settings.permissions.additionalDirectories
 
     expect(dirs).toContain(workDir)
@@ -385,7 +362,7 @@ describe('grove profile apply', () => {
     // --no-apply keeps `add` from writing, so --dry-run has pending work to
     // report and we can prove it writes nothing.
     const workDir = join(sandbox.root, 'work')
-    await runCli(['profile', 'add', 'work', workDir, '--no-apply', '--json'], sandbox)
+    await addProfile(sandbox, 'work', '--no-apply')
 
     const result = await runCli(['profile', 'apply', '--dry-run', '--json'], sandbox)
     const data = result.json<{ dryRun: boolean; changes: { changed: boolean }[] }>()
@@ -401,7 +378,7 @@ describe('grove profile apply', () => {
     // it written. git matches `gitdir:` against the realpath, so a profile
     // dir stored uncanonicalised would silently never match.
     const workDir = join(sandbox.root, 'work')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     await runCli(['profile', 'apply', '--yes', '--json'], sandbox)
 
     // A hand-written setting below the managed block, the way a user would

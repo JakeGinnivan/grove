@@ -9,14 +9,11 @@ import {
   type Sandbox,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { newWorktree, expectError } from './helpers/grove.js'
 
 describe('wt cleanup', () => {
   it('removes a clean worktree', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'disposable', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'disposable')
 
     const result = await runCli(
       ['cleanup', 'demo', path, '--yes', '--no-trash', '--json'],
@@ -35,11 +32,7 @@ describe('wt cleanup', () => {
     // `rev-parse @{u}` exits non-zero *and* echoes the literal "@{u}" on
     // stdout. Reading stdout without the exit code hands that back as a ref
     // name, and `rev-list @{u}..HEAD` then fails the whole command.
-    const created = await runCli(
-      ['new', 'demo', '--title', 'merged upstream', '--json'],
-      sandbox,
-    )
-    const { path, branch } = created.json<{ path: string; branch: string }>()
+    const { path, branch } = await newWorktree(sandbox, 'merged upstream')
     await gitIn(['push', '-u', 'origin', branch], path)
     await gitIn(['push', 'origin', '--delete', branch], path)
     await gitIn(['fetch', '--prune'], path)
@@ -65,27 +58,18 @@ describe('wt cleanup', () => {
   })
 
   it('requires --yes before non-interactive removal', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'needs consent', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'needs consent')
 
     const result = await runCli(
       ['cleanup', 'demo', path, '--no-trash', '--json'],
       sandbox,
     )
-    expect(result.exitCode).toBe(2)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe('needs_input')
+    expectError(result, 'needs_input')
     expect(existsSync(path)).toBe(true)
   })
 
   it('skips a dirty worktree unless forced', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'has work', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'has work')
     await writeFile(join(path, 'wip.txt'), 'important\n')
 
     const result = await runCli(
@@ -100,11 +84,7 @@ describe('wt cleanup', () => {
   })
 
   it('removes a dirty worktree with --force', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'force me', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'force me')
     await writeFile(join(path, 'wip.txt'), 'disposable\n')
 
     const result = await runCli(
@@ -116,11 +96,7 @@ describe('wt cleanup', () => {
   })
 
   it('reports without removing under --dry-run', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'keep me', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'keep me')
 
     const result = await runCli(
       ['cleanup', 'demo', path, '--dry-run', '--json'],
@@ -133,11 +109,7 @@ describe('wt cleanup', () => {
   })
 
   it('moves the worktree to the trash and prunes the registration', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'trash me', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'trash me')
 
     // Point the trash at a directory we control so the test stays hermetic.
     const trashDir = join(sandbox.root, 'trash')
@@ -165,8 +137,7 @@ describe('wt cleanup', () => {
   })
 
   it('falls back to a trash folder beside the worktrees', async ({ sandbox }) => {
-    const created = await runCli(['new', 'demo', '--title', 'local trash', '--json'], sandbox)
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'local trash')
 
     // What happens inside Claude Code's sandbox, where ~/.Trash is unwritable.
     const result = await runCli(
@@ -187,11 +158,7 @@ describe('wt cleanup', () => {
   })
 
   it('does not permanently delete when moving to trash fails', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'trash failure', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'trash failure')
 
     // Moving a directory into one of its own descendants always fails.
     const result = await runCli(
@@ -206,11 +173,7 @@ describe('wt cleanup', () => {
   })
 
   it('aborts when git cannot inspect worktree status', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'broken metadata', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'broken metadata')
 
     const result = await runCli(
       ['cleanup', 'demo', path, '--yes', '--no-trash', '--json'],
@@ -219,17 +182,12 @@ describe('wt cleanup', () => {
       // a directory where it expects an index file on every supported OS.
       { GIT_INDEX_FILE: sandbox.root },
     )
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe('git_failed')
+    expectError(result, 'git_failed')
     expect(existsSync(path)).toBe(true)
   })
 
   it('deletes the branch with --delete-branch', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'branch gone', '--json'],
-      sandbox,
-    )
-    const { path, branch } = created.json<{ path: string; branch: string }>()
+    const { path, branch } = await newWorktree(sandbox, 'branch gone')
 
     await runCli(
       ['cleanup', 'demo', path, '--yes', '--delete-branch', '--no-trash', '--json'],
@@ -242,11 +200,11 @@ describe('wt cleanup', () => {
   describe('interactive picker', () => {
     /** One preselected (clean, merged) worktree and one left unselected (dirty). */
     async function mixedWorktrees(sandbox: Sandbox): Promise<string[]> {
-      const clean = await runCli(['new', 'demo', '--title', 'all clean', '--json'], sandbox)
-      const dirty = await runCli(['new', 'demo', '--title', 'all dirty', '--json'], sandbox)
-      const dirtyPath = dirty.json<{ path: string }>().path
+      const clean = await newWorktree(sandbox, 'all clean')
+      const dirty = await newWorktree(sandbox, 'all dirty')
+      const dirtyPath = dirty.path
       await writeFile(join(dirtyPath, 'wip.txt'), 'wip\n')
-      return [clean.json<{ path: string }>().path, dirtyPath]
+      return [clean.path, dirtyPath]
     }
 
     it('selects every worktree with a', async ({ sandbox }) => {

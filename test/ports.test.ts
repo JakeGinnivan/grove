@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createSandbox, gitIn, runCli, type Sandbox } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { newWorktree, expectError, type NewWorktree } from './helpers/grove.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -26,10 +27,11 @@ async function layout(sandbox: Sandbox, slots = 50, setup = false): Promise<void
   expect(configured.exitCode).toBe(0)
 }
 
-async function create(sandbox: Sandbox, title: string): Promise<{ path: string; port: { slot: number; blockStart: number; duplicate: boolean }; portWarning: string | null }> {
-  const result = await runCli(['new', 'demo', '--title', title, '--json'], sandbox)
-  expect(result.exitCode).toBe(0)
-  return result.json()
+/** A worktree in a repo with a port layout, which always gets a port. */
+async function create(sandbox: Sandbox, title: string) {
+  return (await newWorktree(sandbox, title)) as NewWorktree & {
+    port: NonNullable<NewWorktree['port']>
+  }
 }
 
 describe('worktree ports', () => {
@@ -48,9 +50,7 @@ describe('worktree ports', () => {
 
   it('generates env after bootstrap, preserving unrelated values', async ({ sandbox }) => {
     await layout(sandbox, 50, true)
-    const created = await runCli(['new', 'demo', '--title', 'bootstrapped', '--setup', '--json'], sandbox)
-    expect(created.exitCode).toBe(0)
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'bootstrapped', '--setup')
     const env = await readFile(join(path, '.env'), 'utf8')
     expect(env).toContain('CUSTOM=yes')
     expect(env).toContain('PORT=3820')
@@ -98,7 +98,7 @@ describe('worktree ports', () => {
   })
 
   it('assigns an existing worktree when first queried', async ({ sandbox }) => {
-    const old = await create(sandbox, 'old')
+    const old = await newWorktree(sandbox, 'old')
     expect(old.port).toBeNull()
     await layout(sandbox)
     const query = await runCli(['port', '--json'], sandbox, { PWD: old.path })
@@ -126,8 +126,7 @@ describe('worktree ports', () => {
       const conflict = await runCli([
         'repos', 'add', other.repoPath, '--name', 'other', '--base-port', '4000', '--json',
       ], sandbox)
-      expect(conflict.exitCode).toBe(1)
-      expect(conflict.json<{ error: { code: string } }>().error.code).toBe('port_range_overlap')
+      expectError(conflict, 'port_range_overlap')
       const imported = await runCli([
         'repos', 'add', other.repoPath, '--name', 'other', '--base-port', '5000', '--json',
       ], sandbox)
@@ -220,8 +219,7 @@ describe('worktree ports', () => {
     const regenerate = await runCli(['port', '--generate-compose', '--json'], sandbox, {
       PWD: sandbox.mainPath,
     })
-    expect(regenerate.exitCode).toBe(1)
-    expect(regenerate.json<{ error: { code: string } }>().error.code).toBe('compose_file_not_managed')
+    expectError(regenerate, 'compose_file_not_managed')
     expect(await readFile(join(sandbox.mainPath, 'compose.override.yaml'), 'utf8')).toContain('DEBUG: true')
   })
 
@@ -234,8 +232,7 @@ describe('worktree ports', () => {
     const configured = await runCli(['port', 'configure', '--base-port', '3800', '--json'], sandbox, {
       PWD: sandbox.mainPath,
     })
-    expect(configured.exitCode).toBe(1)
-    expect(configured.json<{ error: { code: string } }>().error.code).toBe('invalid_ports_config')
+    expectError(configured, 'invalid_ports_config')
   })
 })
 

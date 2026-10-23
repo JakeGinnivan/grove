@@ -1,11 +1,22 @@
 import { describe, expect } from 'vitest'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { writeFile, readFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   runCli,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { expectError } from './helpers/grove.js'
+
+/**
+ * Every skill grove ships, read from the templates so that a new skill is
+ * covered here without editing this file, and one missing from the build's
+ * copy list fails.
+ */
+const SKILLS = readdirSync(
+  fileURLToPath(new URL('../src/skills/templates', import.meta.url)),
+).sort()
 
 interface InstallTargets {
   targets: { target: string; dir: string; installed: string[]; skipped: string[] }[]
@@ -21,14 +32,10 @@ describe('wt skills install', () => {
     expect(result.exitCode).toBe(0)
     const data = result.json<InstallTargets>()
     expect(data.targets).toHaveLength(1)
-    expect(data.targets[0]!.installed.sort()).toEqual([
-      'wt-repos',
-      'wt-tidy',
-      'wt-worktree',
-    ])
-    expect(existsSync(join(target, 'wt-repos', 'SKILL.md'))).toBe(true)
-    expect(existsSync(join(target, 'wt-tidy', 'SKILL.md'))).toBe(true)
-    expect(existsSync(join(target, 'wt-worktree', 'SKILL.md'))).toBe(true)
+    expect(data.targets[0]!.installed.sort()).toEqual(SKILLS)
+    for (const name of SKILLS) {
+      expect(existsSync(join(target, name, 'SKILL.md'))).toBe(true)
+    }
   })
 
   it('installs into several targets at once', async ({ sandbox }) => {
@@ -65,10 +72,7 @@ describe('wt skills install', () => {
 
   it('fails clearly when no agent tools are detected', async ({ sandbox }) => {
     const result = await runCli(['skills', 'install', '--json'], sandbox)
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe(
-      'no_agent_tools',
-    )
+    expectError(result, 'no_agent_tools')
   })
 
   it('skips existing skills unless --force is passed', async ({ sandbox }) => {
@@ -80,7 +84,7 @@ describe('wt skills install', () => {
     )
     const data = again.json<InstallTargets>().targets[0]!
     expect(data.installed).toEqual([])
-    expect(data.skipped.sort()).toEqual(['wt-repos', 'wt-tidy', 'wt-worktree'])
+    expect(data.skipped.sort()).toEqual(SKILLS)
   })
 
   it('overwrites with --force', async ({ sandbox }) => {
@@ -99,7 +103,7 @@ describe('wt skills install', () => {
   it('writes skills with valid frontmatter', async ({ sandbox }) => {
     const target = join(sandbox.root, 'skills-target')
     await runCli(['skills', 'install', '--target', target, '--json'], sandbox)
-    for (const name of ['wt-repos', 'wt-tidy', 'wt-worktree']) {
+    for (const name of SKILLS) {
       const content = await readFile(join(target, name, 'SKILL.md'), 'utf8')
       // git may check the template out with CRLF endings on Windows.
       expect(content.replace(/\r\n/g, '\n')).toMatch(

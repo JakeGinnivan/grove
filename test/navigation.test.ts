@@ -8,11 +8,11 @@ import {
   commitAt,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { newWorktree, expectError } from './helpers/grove.js'
 
 describe('wt list', () => {
   it('treats a branch pushed without -u as pushed', async ({ sandbox }) => {
-    const created = await runCli(['new', 'demo', '--title', 'no tracking', '--json'], sandbox)
-    const { path, branch } = created.json<{ path: string; branch: string }>()
+    const { path, branch } = await newWorktree(sandbox, 'no tracking')
     await gitIn(['commit', '--allow-empty', '-m', 'work'], path)
     // What a sandboxed agent can do: push without recording an upstream.
     await gitIn(['push', 'origin', 'HEAD'], path)
@@ -26,11 +26,7 @@ describe('wt list', () => {
   })
 
   it('marks the main worktree and reports dirty state', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'dirty work', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'dirty work')
     await writeFile(join(path, 'scratch.txt'), 'uncommitted\n')
 
     const result = await runCli(['list', 'demo', '--json'], sandbox)
@@ -50,10 +46,9 @@ describe('wt list', () => {
     const find = (entries: Entry[], suffix: string) =>
       entries.find((entry) => entry.dir.endsWith(suffix))
 
-    const fresh = await runCli(['new', 'demo', '--title', 'fresh', '--json'], sandbox)
-    const feature = await runCli(['new', 'demo', '--title', 'feature', '--json'], sandbox)
-    const featurePath = feature.json<{ path: string }>().path
-    expect(fresh.exitCode).toBe(0)
+    const fresh = await newWorktree(sandbox, 'fresh')
+    const feature = await newWorktree(sandbox, 'feature')
+    const featurePath = feature.path
     expect(find(await list(), 'fresh')).toMatchObject({ merged: true, behindBase: 0 })
 
     // Merge the feature through a merge commit and publish it, so origin/main
@@ -73,8 +68,8 @@ describe('wt list', () => {
   it('keeps main first and orders the rest newest commit first', async ({ sandbox }) => {
     const paths: string[] = []
     for (const title of ['alpha work', 'beta work']) {
-      const created = await runCli(['new', 'demo', '--title', title, '--json'], sandbox)
-      paths.push(created.json<{ path: string }>().path)
+      const created = await newWorktree(sandbox, title)
+      paths.push(created.path)
     }
     const [alpha, beta] = paths as [string, string]
     // git lists alpha before beta, so give beta the later commit to prove the
@@ -89,7 +84,7 @@ describe('wt list', () => {
   })
 
   it('shows each repo\'s worktree count when picking a repo', async ({ sandbox }) => {
-    await runCli(['new', 'demo', '--title', 'counted', '--json'], sandbox)
+    await newWorktree(sandbox, 'counted')
     await runCli(['clone', sandbox.remote, 'other', '--no-alias', '--json'], sandbox)
 
     const result = await runCliWithTty(['list'], sandbox, {}, {
@@ -104,30 +99,23 @@ describe('wt list', () => {
 
 describe('wt pick', () => {
   it('resolves a unique substring match', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'unique name here', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'unique name here')
 
     const result = await runCli(['pick', 'demo', 'unique', '--json'], sandbox)
     expect(result.json<{ path: string }>().path).toBe(path)
   })
 
   it('errors on an ambiguous match', async ({ sandbox }) => {
-    await runCli(['new', 'demo', '--title', 'shared alpha', '--json'], sandbox)
-    await runCli(['new', 'demo', '--title', 'shared beta', '--json'], sandbox)
+    await newWorktree(sandbox, 'shared alpha')
+    await newWorktree(sandbox, 'shared beta')
 
     const result = await runCli(['pick', 'demo', 'shared', '--json'], sandbox)
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe(
-      'ambiguous_worktree',
-    )
+    expectError(result, 'ambiguous_worktree')
   })
 
   it('shows each worktree\'s status in the picker', async ({ sandbox }) => {
-    const created = await runCli(['new', 'demo', '--title', 'messy work', '--json'], sandbox)
-    await writeFile(join(created.json<{ path: string }>().path, 'scratch.txt'), 'wip\n')
+    const created = await newWorktree(sandbox, 'messy work')
+    await writeFile(join(created.path, 'scratch.txt'), 'wip\n')
 
     const result = await runCliWithTty(
       ['pick', 'demo'],
@@ -143,7 +131,7 @@ describe('wt pick', () => {
   })
 
   it('hands over to cleanup from the picker', async ({ sandbox }) => {
-    await runCli(['new', 'demo', '--title', 'finished work', '--json'], sandbox)
+    await newWorktree(sandbox, 'finished work')
 
     // Up from the first row wraps to the cleanup entry at the bottom.
     const result = await runCliWithTty(
@@ -165,11 +153,7 @@ describe('wt pick', () => {
 
 describe('shell integration', () => {
   it('emits a cd sentinel only when the wrapper is active', async ({ sandbox }) => {
-    const created = await runCli(
-      ['new', 'demo', '--title', 'cd target', '--json'],
-      sandbox,
-    )
-    const path = created.json<{ path: string }>().path
+    const { path } = await newWorktree(sandbox, 'cd target')
 
     const withWrapper = await runCli(['pick', 'demo', path], sandbox, {
       GROVE_SHELL_INTEGRATION: '1',
@@ -227,7 +211,7 @@ describe('grove __complete', () => {
   })
 
   it('lists worktrees for a repo', async ({ sandbox }) => {
-    await runCli(['new', 'demo', '--title', 'completion target', '--json'], sandbox)
+    await newWorktree(sandbox, 'completion target')
     const result = await runCli(['__complete', 'worktrees', 'demo'], sandbox)
     const dirs = result.stdout
       .trim()
@@ -243,7 +227,7 @@ describe('grove __complete', () => {
   })
 
   it('lists branches and flags those already checked out', async ({ sandbox }) => {
-    await runCli(['new', 'demo', '--title', 'on a branch', '--json'], sandbox)
+    await newWorktree(sandbox, 'on a branch')
     const result = await runCli(['__complete', 'branches', 'demo'], sandbox)
     const rows = result.stdout
       .trim()

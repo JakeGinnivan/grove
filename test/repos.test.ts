@@ -8,6 +8,7 @@ import {
   type Sandbox,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { expectError, addProfile } from './helpers/grove.js'
 
 describe('wt repos', () => {
   it('reports the registered repo and its main path as JSON', async ({ sandbox }) => {
@@ -84,10 +85,7 @@ describe('registry aliases', () => {
       ['import', sandbox.repoPath, 'newrepo', '--alias', 'keepme', '--json'],
       sandbox,
     )
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe(
-      'alias_conflicts_with_repo',
-    )
+    expectError(result, 'alias_conflicts_with_repo')
 
     // The existing repo survived.
     const repos = await runCli(['repos', '--json'], sandbox)
@@ -149,9 +147,7 @@ describe('wt import', () => {
     const path = await makePlainClone(sandbox, 'undecided')
 
     const result = await runCli(['import', path, '--no-alias', '--json'], sandbox)
-    expect(result.exitCode).toBe(2)
-    const error = result.json<{ error: { code: string; hint: string } }>().error
-    expect(error.code).toBe('needs_input')
+    const error = expectError(result, 'needs_input')
     expect(error.hint).toContain('--restructure')
     // Nothing was moved while it was asking.
     expect(existsSync(join(path, '.git'))).toBe(true)
@@ -188,10 +184,7 @@ describe('wt import', () => {
       ['import', path, '--restructure', '--no-alias', '--json'],
       sandbox,
     )
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe(
-      'has_linked_worktrees',
-    )
+    expectError(result, 'has_linked_worktrees')
     // Left exactly as it was.
     expect(existsSync(join(path, '.git'))).toBe(true)
   })
@@ -200,8 +193,7 @@ describe('wt import', () => {
     const path = join(sandbox.root, 'empty')
     await mkdir(path, { recursive: true })
     const result = await runCli(['import', path, '--json'], sandbox)
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe('not_a_repo')
+    expectError(result, 'not_a_repo')
   })
 
   it('points at the repo root when given a subdirectory of one', async ({ sandbox }) => {
@@ -210,15 +202,13 @@ describe('wt import', () => {
     await mkdir(nested, { recursive: true })
 
     const result = await runCli(['import', nested, '--json'], sandbox)
-    expect(result.exitCode).toBe(1)
-    const error = result.json<{ error: { code: string; hint: string } }>().error
-    expect(error.code).toBe('not_repo_root')
+    const error = expectError(result, 'not_repo_root')
     expect(error.hint).toContain('grove import')
   })
 
   it('moves the repo under a profile when asked', async ({ sandbox }) => {
     const workDir = join(sandbox.root, 'work')
-    await runCli(['profile', 'add', 'work', workDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
     const path = await makePlainClone(sandbox, 'relocate')
 
     const result = await runCli(

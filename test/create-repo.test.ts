@@ -8,6 +8,7 @@ import {
   type Sandbox,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
+import { expectError, addProfile } from './helpers/grove.js'
 
 describe('wt create', () => {
   it('creates a repo in the main/ layout and registers it', async ({ sandbox }) => {
@@ -59,16 +60,14 @@ describe('wt create', () => {
   it('refuses to overwrite an existing checkout', async ({ sandbox }) => {
     await runCli(['create', 'twice', '--no-alias', '--json'], sandbox)
     const result = await runCli(['create', 'twice', '--no-alias', '--json'], sandbox)
-    expect(result.exitCode).toBe(1)
-    const error = result.json<{ error: { code: string; hint: string } }>().error
-    expect(error.code).toBe('create_target_exists')
+    const error = expectError(result, 'create_target_exists')
     expect(error.hint).toContain('grove import')
   })
 
   it('routes into a profile directory like clone does', async ({ sandbox }) => {
     const ossDir = join(sandbox.root, 'oss')
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', ossDir, '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss')
 
     const result = await runCli(
       ['create', 'scoped', '--profile', 'oss', '--no-alias', '--json'],
@@ -80,13 +79,11 @@ describe('wt create', () => {
   })
 
   it('requires a profile when several exist and no default is set', async ({ sandbox }) => {
-    await runCli(['profile', 'add', 'work', join(sandbox.root, 'work'), '--json'], sandbox)
-    await runCli(['profile', 'add', 'oss', join(sandbox.root, 'oss'), '--json'], sandbox)
+    await addProfile(sandbox, 'work')
+    await addProfile(sandbox, 'oss')
 
     const result = await runCli(['create', 'ambiguous', '--no-alias', '--json'], sandbox)
-    expect(result.exitCode).toBe(2)
-    const error = result.json<{ error: { code: string; hint: string } }>().error
-    expect(error.code).toBe('needs_input')
+    const error = expectError(result, 'needs_input')
     expect(error.hint).toContain('--profile')
   })
 
@@ -120,13 +117,14 @@ describe('wt create --github', () => {
   /**
    * A stand-in for the GitHub CLI. Tests must never touch the network, so the
    * real `gh` is shadowed by a script on PATH that records its arguments and
-   * reports whatever auth state the test needs.
+   * reports whatever auth state the test needs. `env` puts it on PATH and
+   * lifts the `GROVE_NO_GITHUB` guard every other test runs under.
    */
   async function fakeGh(
     sandbox: Sandbox,
     authOutput: string,
     { exitCode = 0 }: { exitCode?: number } = {},
-  ): Promise<{ binDir: string; logFile: string }> {
+  ): Promise<{ env: NodeJS.ProcessEnv; logFile: string }> {
     const binDir = join(sandbox.root, 'fakebin')
     const logFile = join(sandbox.root, 'gh-calls.log')
     await mkdir(binDir, { recursive: true })
@@ -149,7 +147,10 @@ describe('wt create --github', () => {
       'exit 1',
     ].join('\n')
     await writeFile(join(binDir, 'gh'), `${script}\n`, { mode: 0o755 })
-    return { binDir, logFile }
+    return {
+      env: { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      logFile,
+    }
   }
 
   const LOGGED_IN = 'github.com\n  - Active account: true'
@@ -157,12 +158,12 @@ describe('wt create --github', () => {
     'github.com\n  X Failed to log in to github.com account me (keyring)\n  - The token in keyring is invalid.'
 
   it('creates the repo on GitHub and reports it', async ({ sandbox }) => {
-    const { binDir, logFile } = await fakeGh(sandbox, LOGGED_IN)
+    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
 
     const result = await runCli(
       ['create', 'thing', '--github', '--no-alias', '--json'],
       sandbox,
-      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      env,
     )
     expect(result.exitCode).toBe(0)
     const data = result.json<{
@@ -184,39 +185,34 @@ describe('wt create --github', () => {
   })
 
   it('passes an explicit visibility through', async ({ sandbox }) => {
-    const { binDir, logFile } = await fakeGh(sandbox, LOGGED_IN)
+    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
     await runCli(
       ['create', 'pubthing', '--github', '--visibility', 'public', '--no-alias', '--json'],
       sandbox,
-      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      env,
     )
     expect(await readFile(logFile, 'utf8')).toContain('--public')
   })
 
   it('rejects an unknown visibility before calling gh', async ({ sandbox }) => {
-    const { binDir, logFile } = await fakeGh(sandbox, LOGGED_IN)
+    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
     const result = await runCli(
       ['create', 'badvis', '--github', '--visibility', 'hush', '--no-alias', '--json'],
       sandbox,
-      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      env,
     )
-    expect(result.exitCode).toBe(1)
-    expect(result.json<{ error: { code: string } }>().error.code).toBe(
-      'invalid_visibility',
-    )
+    expectError(result, 'invalid_visibility')
     expect(existsSync(logFile)).toBe(false)
   })
 
   it('treats an invalid gh token as unavailable, keeping the local repo', async ({ sandbox }) => {
-    const { binDir } = await fakeGh(sandbox, BAD_TOKEN)
+    const { env } = await fakeGh(sandbox, BAD_TOKEN)
     const result = await runCli(
       ['create', 'tok', '--github', '--no-alias', '--json'],
       sandbox,
-      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      env,
     )
-    expect(result.exitCode).toBe(1)
-    const error = result.json<{ error: { code: string; message: string } }>().error
-    expect(error.code).toBe('gh_unavailable')
+    const error = expectError(result, 'gh_unavailable')
     expect(error.message).toContain('invalid or expired')
 
     // gh failing must not cost the user the local repo.
@@ -227,34 +223,34 @@ describe('wt create --github', () => {
   })
 
   it('stays silent about GitHub when gh is unusable and none was asked for', async ({ sandbox }) => {
-    const { binDir } = await fakeGh(sandbox, BAD_TOKEN)
+    const { env } = await fakeGh(sandbox, BAD_TOKEN)
     const result = await runCli(
       ['create', 'quiet', '--no-alias', '--json'],
       sandbox,
-      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      env,
     )
     expect(result.exitCode).toBe(0)
     expect(result.json<{ github: unknown }>().github).toBeNull()
   })
 
   it('never calls gh with --no-github', async ({ sandbox }) => {
-    const { binDir, logFile } = await fakeGh(sandbox, LOGGED_IN)
+    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
     const result = await runCli(
       ['create', 'local', '--no-github', '--no-alias', '--json'],
       sandbox,
-      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      env,
     )
     expect(result.json<{ github: unknown }>().github).toBeNull()
     expect(existsSync(logFile)).toBe(false)
   })
 
   it('does not prompt for GitHub in non-interactive mode', async ({ sandbox }) => {
-    const { binDir, logFile } = await fakeGh(sandbox, LOGGED_IN)
+    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
     // --json implies non-interactive: a prompt here would hang the run.
     const result = await runCli(
       ['create', 'unattended', '--no-alias', '--json'],
       sandbox,
-      { PATH: `${binDir}:${process.env['PATH']}`, GROVE_NO_GITHUB: '' },
+      env,
     )
     expect(result.exitCode).toBe(0)
     expect(result.json<{ github: unknown }>().github).toBeNull()

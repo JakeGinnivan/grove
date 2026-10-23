@@ -1,5 +1,16 @@
 # @jakeginnivan/grove
 
+## 0.8.0
+
+### Minor Changes
+
+- 73daccf: `grove cleanup`'s multi-select now toggles every worktree with `a` (all, or
+  none when all are already selected), including in the default status-grouped
+  view, and says so in the prompt. When no repo is given, the repo picker for
+  `grove cleanup` and `grove list` shows each repo's worktree count.
+- 4ecc1bc: Task trackers are now a setting. `grove setup` asks which of Jira, Linear and GitHub Issues to use (or `--task-trackers github,jira`, or `none`). `grove new` only detects and prompts for keys from the enabled trackers, works out the tracker from the key's format, and skips the prompt when none are enabled. `--issue <key>` and `--no-issue` join `--jira`/`--no-jira`, and `--json` output reports the matched `issue`.
+- cb1518f: `grove setup` is now a settings menu: it lists every setting with its current value, edits the one you pick, and returns to the list until you save. It also covers the trash setting and the default profile, which setup could not change before. Flags (now including `--trash`/`--no-trash`) set only what they name and never prompt, and setup no longer writes `GROVE_*` environment overrides into the config file.
+
 ## 0.7.0
 
 ### Minor Changes

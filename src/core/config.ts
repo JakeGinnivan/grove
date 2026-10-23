@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { WtError } from './errors.js'
 import { canonical } from './paths.js'
+import type { TaskTrackerId } from './trackers.js'
 
 /**
  * A profile is a base directory that repositories are grouped under — for
@@ -33,6 +34,11 @@ export interface GroveConfig {
   defaultProfile?: string
   /** Move removed worktrees to the trash instead of deleting them. */
   useTrash: boolean
+  /**
+   * Trackers whose issue keys `grove new` looks for and prompts for, in
+   * detection order. Empty turns the prompt off.
+   */
+  taskTrackers: TaskTrackerId[]
   /** Claude permission entries owned by Grove, used to revoke stale grants. */
   managedClaudePermissions?: {
     additionalDirectories: string[]
@@ -54,6 +60,8 @@ function defaults(): GroveConfig {
     defaultCodeDir: join(homedir(), '_code'),
     profiles: {},
     useTrash: true,
+    // Grove only knew Jira before this was configurable.
+    taskTrackers: ['jira'],
   }
 }
 

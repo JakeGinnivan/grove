@@ -1,7 +1,16 @@
 import { Command } from 'commander'
 import { loadConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor } from '../core/registry.js'
-import { generateNames, extractJiraKey } from '../core/naming.js'
+import { generateNames } from '../core/naming.js'
+import {
+  TASK_TRACKERS,
+  TASK_TRACKER_IDS,
+  enabledTrackers,
+  findIssue,
+  parseIssue,
+  describeFormats,
+  type Issue,
+} from '../core/trackers.js'
 import { createWorktree, resolveBase } from '../core/worktree.js'
 import { requireText, optionalText, confirm, canPrompt } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, getOutputContext } from '../core/output.js'
@@ -15,8 +24,10 @@ export function newCommand(): Command {
     .argument('[repo]', 'registered repo name or alias')
     .argument('[title]', 'short description of the work')
     .option('-t, --title <title>', 'title (alternative to positional argument)')
+    .option('-i, --issue <key>', 'issue key, matched against the configured task trackers')
+    .option('--no-issue', 'skip the issue prompt entirely')
     .option('-j, --jira <key>', 'Jira issue key, e.g. ABC-123')
-    .option('--no-jira', 'skip the Jira prompt entirely')
+    .option('--no-jira', 'same as --no-issue')
     .option(
       '--on <branch|worktree>',
       'stack on an existing branch or worktree instead of the default base',
@@ -35,6 +46,7 @@ export function newCommand(): Command {
 
 interface NewOptions {
   title?: string
+  issue?: string | false
   jira?: string | false
   on?: string
   base?: string
@@ -62,36 +74,11 @@ async function runNew(
     placeholder: 'fix flaky login test',
   })
 
-  // --no-jira disables the prompt; an explicit --jira wins; otherwise we
-  // try to read a key out of the title before asking.
-  let jiraKey: string | undefined
-  if (options.jira === false) {
-    jiraKey = undefined
-  } else if (typeof options.jira === 'string') {
-    jiraKey = extractJiraKey(options.jira)
-    if (!jiraKey) {
-      throw new WtError(`Invalid Jira key: ${options.jira}`, {
-        code: 'invalid_jira_key',
-        hint: 'Expected a key like ABC-123.',
-      })
-    }
-  } else {
-    const fromTitle = extractJiraKey(title)
-    jiraKey =
-      fromTitle ??
-      extractJiraKey(
-        (await optionalText(undefined, {
-          message: 'Jira key (optional)',
-          placeholder: 'ABC-123',
-          validate: (value) =>
-            extractJiraKey(value) ? undefined : 'Expected a key like ABC-123.',
-        })) ?? '',
-      )
-  }
+  const issue = await resolveIssue(title, options, config.taskTrackers)
 
   const names = generateNames({
     title,
-    jiraKey,
+    issueKey: issue?.key,
     branchPrefix: config.branchPrefix,
   })
   const branch = options.branch ?? names.branch
@@ -142,6 +129,7 @@ async function runNew(
       branch: created.branch,
       base: created.base,
       parent: created.parent ?? null,
+      issue: issue ?? null,
       port: created.port,
       portWarning: created.portWarning,
     })
@@ -150,4 +138,59 @@ async function runNew(
 
   success(`Created ${pc.cyan(branch)} at ${created.path}`)
   emitCd(created.path)
+}
+
+/**
+ * --no-issue disables the prompt; an explicit key wins; otherwise we look for
+ * a key from an enabled tracker in the title before asking. With no trackers
+ * enabled there is nothing to detect and no prompt.
+ */
+async function resolveIssue(
+  title: string,
+  options: NewOptions,
+  taskTrackers: readonly string[],
+): Promise<Issue | undefined> {
+  if (options.issue === false || options.jira === false) return undefined
+
+  if (typeof options.jira === 'string') {
+    const key = TASK_TRACKERS.jira.parse(options.jira)
+    if (!key) {
+      throw new WtError(`Invalid Jira key: ${options.jira}`, {
+        code: 'invalid_jira_key',
+        hint: 'Expected a key like ABC-123.',
+      })
+    }
+    return { tracker: 'jira', key }
+  }
+
+  const enabled = enabledTrackers(taskTrackers)
+
+  if (typeof options.issue === 'string') {
+    // An explicit key is accepted from any tracker; enabled ones go first so
+    // they win when two trackers share a key shape.
+    const all = [...enabled, ...enabledTrackers(TASK_TRACKER_IDS)]
+    const issue = parseIssue(options.issue, all)
+    if (!issue) {
+      throw new WtError(`Invalid issue key: ${options.issue}`, {
+        code: 'invalid_issue_key',
+        hint: `Expected a key like ${describeFormats(all)}.`,
+      })
+    }
+    return issue
+  }
+
+  if (enabled.length === 0) return undefined
+
+  const fromTitle = findIssue(title, enabled)
+  if (fromTitle) return fromTitle
+
+  const formats = describeFormats(enabled)
+  const typed = await optionalText(undefined, {
+    message:
+      enabled.length === 1 ? `${enabled[0]!.label} key (optional)` : 'Issue key (optional)',
+    placeholder: formats,
+    validate: (value) =>
+      parseIssue(value, enabled) ? undefined : `Expected a key like ${formats}.`,
+  })
+  return typed ? parseIssue(typed, enabled) : undefined
 }

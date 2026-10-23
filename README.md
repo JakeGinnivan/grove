@@ -149,7 +149,19 @@ wt new my-service "fix login" --jira ABC-123
 #   worktree: 260810-fix-login-ABC-123
 ```
 
-A key already present in the title is detected automatically.
+A key already present in the title is detected automatically. Which formats
+are recognised, and whether `grove new` prompts for a key at all, depends on
+the task trackers enabled with `grove setup`:
+
+| Tracker | Key | Branch |
+| --- | --- | --- |
+| `jira` | `ABC-123` | `you/ABC-123-fix-login` |
+| `linear` | `ABC-123` | `you/ABC-123-fix-login` |
+| `github` | `#123` (or `123` / an issue URL at the prompt) | `you/123-fix-login` |
+
+With several enabled, type any of them at the prompt and the format picks the
+tracker. With none enabled there is no prompt. `--issue <key>` passes one
+explicitly; `--no-issue` skips detection for one run.
 
 ### Check out an existing branch
 
@@ -503,6 +515,7 @@ records for worktree directories that are already missing. See the
 | `defaultProfile` | Profile used when `--profile` is not given |
 | `reposFile` | Repo registry location (default `~/.wt_repos`) |
 | `useTrash` | Trash removed worktrees instead of deleting |
+| `taskTrackers` | Trackers whose issue keys `grove new` detects and prompts for: any of `jira`, `linear`, `github`, in detection order (default `["jira"]`; `[]` for none). Set with `grove setup --task-trackers github,jira` |
 | `managedClaudePermissions` | Internal ownership record used to revoke only Claude grants Grove added |
 
 `GROVE_BRANCH_PREFIX`, `GROVE_DEFAULT_CODE_DIR`, `GROVE_REPOS_FILE`, and

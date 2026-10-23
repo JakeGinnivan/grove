@@ -45,7 +45,7 @@ flag to pass, rather than hanging on a prompt:
 ## Start a new task
 
 ```bash
-grove new <repo> --title "short description" [--jira ABC-123] --json
+grove new <repo> --title "short description" [--issue ABC-123] --json
 ```
 
 Creates a branch from the latest default branch and a matching directory:
@@ -63,9 +63,12 @@ and rebase against `origin/main`, not local `main`, which is often behind.
 
 Useful flags:
 
-- `--jira ABC-123` — include a ticket key in the branch and directory names.
-  A key already present in the title is picked up automatically.
-- `--no-jira` — never prompt for or infer a ticket key.
+- `--issue ABC-123` — include a ticket key in the branch and directory names.
+  Jira/Linear keys (`ABC-123`) and GitHub issues (`#123`) are both accepted;
+  the result's `issue` field says which tracker matched. A key from one of the
+  user's configured trackers already present in the title is picked up
+  automatically.
+- `--no-issue` — never infer a ticket key.
 - `--branch <name>` — override the generated branch name.
 - `--setup` — run reviewed, trusted repo-defined setup commands. Never pass
   this for an unfamiliar repository; setup is arbitrary shell code and is

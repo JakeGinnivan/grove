@@ -211,22 +211,35 @@ function makeResult(stdout: string, stderr: string, exitCode: number): RunResult
  * `answerWhen` is matched against stderr as it arrives and the Enter is sent
  * once it matches, so the handoff does not depend on the clone finishing
  * inside a fixed window on a cold or loaded runner.
+ *
+ * `steps` answers several prompts in turn. Each step matches only stderr
+ * written after the previous answer, so a menu that redraws the same text
+ * is answered once per appearance.
  */
+export interface TtyStep {
+  answerWhen: string | RegExp
+  /** Sent once `answerWhen` appears. Defaults to Enter. */
+  keys?: string
+}
+
 export async function runCliWithTty(
   args: string[],
   sandbox: Sandbox,
   extraEnv: NodeJS.ProcessEnv = {},
-  {
-    answerWhen,
-    keys = '\r',
-    timeoutMs = 15_000,
-  }: {
-    answerWhen: string | RegExp
-    /** Sent once `answerWhen` appears. Defaults to Enter. */
-    keys?: string
-    timeoutMs?: number
-  },
+  options: (
+    | {
+        answerWhen: string | RegExp
+        /** Sent once `answerWhen` appears. Defaults to Enter. */
+        keys?: string
+      }
+    | { steps: TtyStep[] }
+  ) & { timeoutMs?: number },
 ): Promise<RunResult> {
+  const steps: TtyStep[] =
+    'steps' in options
+      ? options.steps
+      : [{ answerWhen: options.answerWhen, keys: options.keys ?? '\r' }]
+  const timeoutMs = options.timeoutMs ?? 15_000
   // A loader that flips isTTY before handing off to the real bundle. argv[1]
   // is rewritten so the CLI's own argv parsing lines up as if run directly.
   const shim = join(sandbox.root, 'tty-shim.mjs')
@@ -250,6 +263,7 @@ export async function runCliWithTty(
       HOME: sandbox.root,
       USERPROFILE: sandbox.root,
       GROVE_REPOS_FILE: sandbox.reposFile,
+      GROVE_BRANCH_PREFIX: 'test/',
       GROVE_DEFAULT_CODE_DIR: join(sandbox.root, 'code'),
       GIT_CONFIG_GLOBAL: join(sandbox.root, '.gitconfig'),
       GIT_CONFIG_SYSTEM: NULL_DEVICE,
@@ -268,20 +282,25 @@ export async function runCliWithTty(
   let stderr = ''
   child.stdout.on('data', (chunk) => (stdout += chunk))
 
-  // Accept the prompt's default, but only once the prompt is actually on
-  // screen — clack is not listening before then, and an Enter sent early is
-  // dropped. A carriage return is what a real terminal sends in raw mode.
-  let answered = false
-  const matches = (text: string) =>
+  // Answer each prompt only once it is actually on screen — clack is not
+  // listening before then, and keys sent early are dropped. A carriage
+  // return is what a real terminal sends in raw mode.
+  let step = 0
+  let seen = 0
+  const matches = (text: string, answerWhen: string | RegExp) =>
     typeof answerWhen === 'string' ? text.includes(answerWhen) : answerWhen.test(text)
   child.stderr.on('data', (chunk) => {
     stderr += chunk
-    if (!answered && matches(stderr)) {
-      answered = true
-      // End stdin after the answer: clack puts the pipe in raw mode and keeps
-      // it open, which holds the child's event loop open after it has finished.
-      child.stdin.end(keys)
-    }
+    const current = steps[step]
+    if (!current || !matches(stderr.slice(seen), current.answerWhen)) return
+    step += 1
+    seen = stderr.length
+    const keys = current.keys ?? '\r'
+    // End stdin after the last answer: clack puts the pipe in raw mode and
+    // keeps it open, which holds the child's event loop open after it has
+    // finished.
+    if (step === steps.length) child.stdin.end(keys)
+    else child.stdin.write(keys)
   })
 
   let timedOut = false
@@ -299,7 +318,7 @@ export async function runCliWithTty(
 
   if (timedOut) {
     throw new Error(
-      `CLI timed out after ${timeoutMs}ms waiting for ${String(answerWhen)} on stderr.\n` +
+      `CLI timed out after ${timeoutMs}ms waiting for ${String(steps[step]?.answerWhen)} on stderr.\n` +
         `--- stderr ---\n${stderr}\n--- stdout ---\n${stdout}`,
     )
   }

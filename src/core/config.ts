@@ -87,7 +87,12 @@ export function expandHome(path: string): string {
   return path
 }
 
-export async function loadConfig(): Promise<GroveConfig> {
+/**
+ * Load the config file over the defaults. `env: false` skips the environment
+ * overrides, for callers that save the result back: otherwise a value set
+ * only in the environment would be written into the file.
+ */
+export async function loadConfig({ env: useEnv = true } = {}): Promise<GroveConfig> {
   let fileConfig: Partial<GroveConfig> = {}
   if (existsSync(CONFIG_PATH)) {
     try {
@@ -101,7 +106,7 @@ export async function loadConfig(): Promise<GroveConfig> {
   }
 
   const base = defaults()
-  const env = fromEnv()
+  const env = useEnv ? fromEnv() : {}
   const merged: GroveConfig = {
     ...base,
     ...fileConfig,

@@ -10,20 +10,14 @@ import {
 } from '../src/core/naming.js'
 
 describe('slugify', () => {
-  it('lowercases and dashes words', () => {
-    expect(slugify('Fix The Login Bug')).toBe('fix-the-login-bug')
-  })
-
-  it('strips punctuation', () => {
-    expect(slugify('fix: login (again)!')).toBe('fix-login-again')
-  })
-
-  it('collapses repeated separators', () => {
-    expect(slugify('a   --  b')).toBe('a-b')
-  })
-
-  it('trims leading and trailing dashes', () => {
-    expect(slugify('  -hello-  ')).toBe('hello')
+  it.each([
+    ['lowercases and dashes words', 'Fix The Login Bug', 'fix-the-login-bug'],
+    ['strips punctuation', 'fix: login (again)!', 'fix-login-again'],
+    ['collapses repeated separators', 'a   --  b', 'a-b'],
+    ['trims leading and trailing dashes', '  -hello-  ', 'hello'],
+    ['returns empty with no alphanumerics', '!!! ???', ''],
+  ])('%s', (_, input, expected) => {
+    expect(slugify(input)).toBe(expected)
   })
 
   it('caps length at 50 characters without a trailing dash', () => {
@@ -31,63 +25,38 @@ describe('slugify', () => {
     expect(result.length).toBeLessThanOrEqual(50)
     expect(result.endsWith('-')).toBe(false)
   })
-
-  it('returns empty for input with no alphanumerics', () => {
-    expect(slugify('!!! ???')).toBe('')
-  })
 })
 
 describe('extractJiraKey', () => {
-  it('finds a key in a sentence', () => {
-    expect(extractJiraKey('fix ABC-123 please')).toBe('ABC-123')
-  })
-
-  it('uppercases lowercase input', () => {
-    expect(extractJiraKey('abc-123')).toBe('ABC-123')
-  })
-
-  it('returns the first key when several are present', () => {
-    expect(extractJiraKey('ABC-1 and DEF-2')).toBe('ABC-1')
-  })
-
-  it('handles keys containing digits', () => {
-    expect(extractJiraKey('GRAPHYTE2-2469')).toBe('GRAPHYTE2-2469')
-  })
-
-  it('returns undefined when absent', () => {
-    expect(extractJiraKey('no ticket here')).toBeUndefined()
-  })
-
-  it('does not match a bare number', () => {
-    expect(extractJiraKey('123-456')).toBeUndefined()
+  it.each([
+    ['finds a key in a sentence', 'fix ABC-123 please', 'ABC-123'],
+    ['uppercases lowercase input', 'abc-123', 'ABC-123'],
+    ['returns the first of several keys', 'ABC-1 and DEF-2', 'ABC-1'],
+    ['handles keys containing digits', 'GRAPHYTE2-2469', 'GRAPHYTE2-2469'],
+    ['returns undefined when absent', 'no ticket here', undefined],
+    ['does not match a bare number', '123-456', undefined],
+  ])('%s', (_, input, expected) => {
+    expect(extractJiraKey(input)).toBe(expected)
   })
 })
 
 describe('datePrefix', () => {
-  it('formats as yymmdd', () => {
-    expect(datePrefix(new Date(2026, 7, 10))).toBe('260810')
-  })
-
-  it('zero-pads single digits', () => {
-    expect(datePrefix(new Date(2026, 0, 5))).toBe('260105')
+  it.each([
+    ['formats as yymmdd', new Date(2026, 7, 10), '260810'],
+    ['zero-pads single digits', new Date(2026, 0, 5), '260105'],
+  ])('%s', (_, date, expected) => {
+    expect(datePrefix(date)).toBe(expected)
   })
 })
 
 describe('stripIssueKey', () => {
-  it('removes the key and tidies separators', () => {
-    expect(stripIssueKey('ABC-123: fix thing', 'ABC-123')).toBe('fix thing')
-  })
-
-  it('is case-insensitive', () => {
-    expect(stripIssueKey('abc-123 fix', 'ABC-123')).toBe('fix')
-  })
-
-  it('leaves the title alone when no key given', () => {
-    expect(stripIssueKey('fix thing')).toBe('fix thing')
-  })
-
-  it('removes a GitHub number only with its #', () => {
-    expect(stripIssueKey('#24 bump node to 24', '24')).toBe('bump node to 24')
+  it.each([
+    ['removes the key and tidies separators', 'ABC-123: fix thing', 'ABC-123', 'fix thing'],
+    ['is case-insensitive', 'abc-123 fix', 'ABC-123', 'fix'],
+    ['leaves the title alone when no key given', 'fix thing', undefined, 'fix thing'],
+    ['removes a GitHub number only with its #', '#24 bump node to 24', '24', 'bump node to 24'],
+  ])('%s', (_, title, key, expected) => {
+    expect(stripIssueKey(title, key)).toBe(expected)
   })
 })
 
@@ -153,57 +122,29 @@ describe('generateNames', () => {
 describe('worktreeDirForBranch', () => {
   const date = new Date(2026, 7, 10)
 
-  it('drops the owner segment', () => {
-    expect(worktreeDirForBranch('jake/fix-login', date)).toBe('260810-fix-login')
-  })
-
-  it('handles a branch with no owner', () => {
-    expect(worktreeDirForBranch('main', date)).toBe('260810-main')
-  })
-
-  it('slugifies nested branch names', () => {
-    expect(worktreeDirForBranch('feature/JIRA-1/thing', date)).toBe(
-      '260810-jira-1thing',
-    )
+  it.each([
+    ['drops the owner segment', 'jake/fix-login', '260810-fix-login'],
+    ['handles a branch with no owner', 'main', '260810-main'],
+    ['slugifies nested branch names', 'feature/JIRA-1/thing', '260810-jira-1thing'],
+  ])('%s', (_, branch, expected) => {
+    expect(worktreeDirForBranch(branch, date)).toBe(expected)
   })
 })
 
 describe('repoNameFromUrl', () => {
-  it('handles scp-style ssh URLs', () => {
-    expect(repoNameFromUrl('git@github.com:owner/my-repo.git')).toBe('my-repo')
-  })
-
-  it('handles https URLs', () => {
-    expect(repoNameFromUrl('https://github.com/owner/my-repo.git')).toBe('my-repo')
-  })
-
-  it('handles URLs without the .git suffix', () => {
-    expect(repoNameFromUrl('https://github.com/owner/my-repo')).toBe('my-repo')
-  })
-
-  it('handles trailing slashes', () => {
-    expect(repoNameFromUrl('https://github.com/owner/my-repo/')).toBe('my-repo')
-  })
-
-  it('handles ssh:// URLs with a port', () => {
-    expect(repoNameFromUrl('ssh://git@host:7999/proj/my-repo.git')).toBe('my-repo')
-  })
-
-  it('handles POSIX filesystem paths', () => {
-    expect(repoNameFromUrl('/srv/git/my-repo.git')).toBe('my-repo')
-  })
-
-  // A drive letter ends in a colon, so splitting on ':' alone would cut at
-  // `C:` and return the rest of the path as the name.
-  it('handles Windows paths with a drive letter', () => {
-    expect(repoNameFromUrl('C:\\repos\\my-repo.git')).toBe('my-repo')
-  })
-
-  it('handles Windows UNC paths', () => {
-    expect(repoNameFromUrl('\\\\server\\share\\my-repo.git')).toBe('my-repo')
-  })
-
-  it('handles Windows paths with a trailing separator', () => {
-    expect(repoNameFromUrl('C:\\repos\\my-repo\\')).toBe('my-repo')
+  // A Windows drive letter ends in a colon, so splitting on ':' alone would
+  // cut at `C:` and return the rest of the path as the name.
+  it.each([
+    ['scp-style ssh URLs', 'git@github.com:owner/my-repo.git'],
+    ['https URLs', 'https://github.com/owner/my-repo.git'],
+    ['URLs without the .git suffix', 'https://github.com/owner/my-repo'],
+    ['trailing slashes', 'https://github.com/owner/my-repo/'],
+    ['ssh:// URLs with a port', 'ssh://git@host:7999/proj/my-repo.git'],
+    ['POSIX filesystem paths', '/srv/git/my-repo.git'],
+    ['Windows paths with a drive letter', 'C:\\repos\\my-repo.git'],
+    ['Windows UNC paths', '\\\\server\\share\\my-repo.git'],
+    ['Windows paths with a trailing separator', 'C:\\repos\\my-repo\\'],
+  ])('handles %s', (_, url) => {
+    expect(repoNameFromUrl(url)).toBe('my-repo')
   })
 })

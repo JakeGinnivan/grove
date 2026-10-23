@@ -94,7 +94,7 @@ export async function runCleanup(
   options: CleanupOptions,
 ): Promise<void> {
   const config = await loadConfig()
-  const repoName = await pickRepo(config.reposFile, repoArg)
+  const repoName = await pickRepo(config.reposFile, repoArg, { worktreeCounts: true })
   const repo = await resolveRepo(config.reposFile, repoName)
   const gitDir = await gitDirFor(repo.path)
 

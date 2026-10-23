@@ -114,7 +114,7 @@ describe('wt new', () => {
     )
     expect(result.stderr).not.toContain('key (optional)')
     expect(result.exitCode).toBe(0)
-  }, 30_000)
+  })
 
   it('auto-detects the tracker from a key typed at the prompt', async () => {
     await runCli(['setup', '--task-trackers', 'jira,github', '--json'], sandbox)
@@ -131,7 +131,7 @@ describe('wt new', () => {
       result.stdout.trim().replace('__WT_CD__', ''),
     )
     expect(branch).toBe('test/5-typed-key')
-  }, 30_000)
+  })
 
   it('fails with needs_input when the title is missing', async () => {
     const result = await runCli(['new', 'demo', '--json'], sandbox)
@@ -482,7 +482,7 @@ describe('wt checkout', () => {
       result.stdout.trim().replace('__WT_CD__', ''),
     )
     expect(branch).toBe('listed/branch')
-  }, 30_000)
+  })
 
   it('marks a branch that is already checked out in the picker', async () => {
     await runCli(['new', 'demo', '--title', 'taken branch', '--json'], sandbox)
@@ -496,7 +496,7 @@ describe('wt checkout', () => {
 
     expect(result.stderr).toContain('test/taken-branch')
     expect(result.stderr).toContain('already checked out')
-  }, 30_000)
+  })
 
   it('still prompts for a free-text name with --create', async () => {
     // Nothing to list for a branch that does not exist yet, so --create keeps
@@ -508,7 +508,7 @@ describe('wt checkout', () => {
       { answerWhen: 'feature/some-branch' },
     )
     expect(result.stderr).toContain('feature/some-branch')
-  }, 30_000)
+  })
 })
 
 describe('grove setup', () => {
@@ -542,7 +542,7 @@ describe('grove setup', () => {
     }
     expect(result.stderr).toContain('me/')
     expect(result.stderr).toContain('No changes.')
-  }, 30_000)
+  })
 
   it('edits one setting and returns to the menu before saving', async () => {
     await runCli(['setup', '--branch-prefix', 'me/', '--json'], sandbox)
@@ -556,7 +556,7 @@ describe('grove setup', () => {
     })
     expect(result.exitCode).toBe(0)
     expect(await readConfig()).toMatchObject({ branchPrefix: 'me/', taskTrackers: ['github'] })
-  }, 30_000)
+  })
 
   it('goes back to the menu when a single setting is cancelled', async () => {
     await runCli(['setup', '--branch-prefix', 'me/', '--json'], sandbox)
@@ -570,7 +570,7 @@ describe('grove setup', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toContain('No changes.')
     expect((await readConfig()).branchPrefix).toBe('me/')
-  }, 30_000)
+  })
 })
 
 describe('wt list', () => {
@@ -650,6 +650,19 @@ describe('wt list', () => {
     const data = result.json<{ worktrees: { path: string; isMain: boolean }[] }>()
     expect(data.worktrees[0]?.isMain).toBe(true)
     expect(data.worktrees.slice(1).map((wt) => wt.path)).toEqual([beta, alpha])
+  })
+
+  it('shows each repo\'s worktree count when picking a repo', async () => {
+    await runCli(['new', 'demo', '--title', 'counted', '--json'], sandbox)
+    await runCli(['clone', sandbox.remote, 'other', '--no-alias', '--json'], sandbox)
+
+    const result = await runCliWithTty(['list'], sandbox, {}, {
+      answerWhen: 'Which repo?',
+      keys: '\x03',
+    })
+
+    expect(result.stderr).toContain('demo (1)')
+    expect(result.stderr).toContain('other (0)')
   })
 })
 
@@ -952,6 +965,61 @@ describe('wt cleanup', () => {
     const branches = await gitIn(['branch', '--list', branch], sandbox.mainPath)
     expect(branches).toBe('')
   })
+
+  describe('interactive picker', () => {
+    /** One preselected (clean, merged) worktree and one left unselected (dirty). */
+    async function mixedWorktrees(): Promise<string[]> {
+      const clean = await runCli(['new', 'demo', '--title', 'all clean', '--json'], sandbox)
+      const dirty = await runCli(['new', 'demo', '--title', 'all dirty', '--json'], sandbox)
+      const dirtyPath = dirty.json<{ path: string }>().path
+      await writeFile(join(dirtyPath, 'wip.txt'), 'wip\n')
+      return [clean.json<{ path: string }>().path, dirtyPath]
+    }
+
+    it('selects every worktree with a', async () => {
+      const paths = await mixedWorktrees()
+
+      const result = await runCliWithTty(
+        ['cleanup', 'demo', '--dry-run'],
+        sandbox,
+        {},
+        { answerWhen: 'Select worktrees to remove', keys: 'a\r' },
+      )
+
+      expect(result.stderr).toContain('a: all / none')
+      // The prompt itself lists every worktree, so only read past it.
+      const [, wouldRemove] = result.stderr.split('Would remove:')
+      expect(wouldRemove).toBeDefined()
+      for (const path of paths) expect(wouldRemove).toContain(basename(path))
+    })
+
+    it('clears the selection when a is pressed with everything selected', async () => {
+      await mixedWorktrees()
+
+      const result = await runCliWithTty(
+        ['cleanup', 'demo', '--dry-run'],
+        sandbox,
+        {},
+        { answerWhen: 'Select worktrees to remove', keys: 'aa\r' },
+      )
+
+      expect(result.stderr).toContain('Nothing selected.')
+    })
+
+    it('shows each repo\'s worktree count when picking a repo', async () => {
+      await mixedWorktrees()
+      await runCli(['clone', sandbox.remote, 'other', '--no-alias', '--json'], sandbox)
+
+      // Ctrl-C at the repo prompt: only what it rendered matters here.
+      const result = await runCliWithTty(['cleanup'], sandbox, {}, {
+        answerWhen: 'Which repo?',
+        keys: '\x03',
+      })
+
+      expect(result.stderr).toContain('demo (2)')
+      expect(result.stderr).toContain('other (0)')
+    })
+  })
 })
 
 interface InstallTargets {
@@ -1107,7 +1175,7 @@ describe('shell integration', () => {
     // stdout carries the sentinel and nothing else, so the wrapper can cd.
     const mainPath = join(sandbox.root, 'code', 'prompted', 'main')
     expect(result.stdout.trim()).toBe(`__WT_CD__${mainPath}`)
-  }, 30_000)
+  })
 })
 
 describe('grove __complete', () => {
@@ -1683,7 +1751,7 @@ describe('wt pick', () => {
     // Main counts as merged into its own upstream, which says nothing useful.
     expect(result.stderr).not.toMatch(/main\s+○ clean\s+✔ merged/)
     expect(result.exitCode).toBe(0)
-  }, 30_000)
+  })
 
   it('hands over to cleanup from the picker', async () => {
     await runCli(['new', 'demo', '--title', 'finished work', '--json'], sandbox)
@@ -1698,7 +1766,7 @@ describe('wt pick', () => {
 
     expect(result.stderr).toContain('Select worktrees to remove')
     expect(result.stdout).not.toContain('__WT_CD__')
-  }, 30_000)
+  })
 
   it('jumps to main with --main', async () => {
     const result = await runCli(['pick', 'demo', '--main', '--json'], sandbox)

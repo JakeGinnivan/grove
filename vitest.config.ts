@@ -6,7 +6,10 @@ export default defineConfig({
     // Building here (rather than only in a pretest script) keeps a bare
     // `vitest` run from silently testing stale output.
     globalSetup: ['./test/helpers/build.ts'],
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    // The slowest test takes about 3s; a run that needs much more than that
+    // is stuck, and waiting out a long limit on every test turns one hang
+    // into a twenty-minute suite.
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
   },
 })

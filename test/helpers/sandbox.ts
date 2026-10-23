@@ -22,6 +22,14 @@ const CLI = resolve(
  */
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
 
+/**
+ * A single command that runs this long is hung, not slow: everything the
+ * suite runs finishes in a second or two. Killing it here, well inside the
+ * test timeout, names the stuck command instead of leaving a bare "test
+ * timed out" with the child still running.
+ */
+const COMMAND_TIMEOUT_MS = 10_000
+
 export interface Sandbox {
   root: string
   /** Bare repo standing in for origin. */
@@ -62,10 +70,18 @@ async function git(
   globalConfig = NULL_DEVICE,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<string> {
-  const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
-    env: { ...gitEnv(globalConfig), ...extraEnv },
-  })
-  return stdout.trim()
+  const started = Date.now()
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
+      env: { ...gitEnv(globalConfig), ...extraEnv },
+      timeout: COMMAND_TIMEOUT_MS,
+    })
+    return stdout.trim()
+  } catch (error) {
+    const err = error as { stdout?: string; stderr?: string; killed?: boolean }
+    if (err.killed) throw timedOut(['git', ...args], started, err.stdout, err.stderr)
+    throw error
+  }
 }
 
 /**
@@ -181,17 +197,36 @@ export async function runCli(
     ...extraEnv,
   }
 
+  const started = Date.now()
   try {
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
       [CLI, ...args],
-      { env, cwd: extraEnv['PWD'] ?? sandbox.root },
+      { env, cwd: extraEnv['PWD'] ?? sandbox.root, timeout: COMMAND_TIMEOUT_MS },
     )
     return makeResult(stdout, stderr, 0)
   } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; code?: number }
+    const err = error as {
+      stdout?: string
+      stderr?: string
+      code?: number
+      killed?: boolean
+    }
+    if (err.killed) throw timedOut(['grove', ...args], started, err.stdout, err.stderr)
     return makeResult(err.stdout ?? '', err.stderr ?? '', err.code ?? 1)
   }
+}
+
+function timedOut(
+  command: string[],
+  started: number,
+  stdout = '',
+  stderr = '',
+): Error {
+  return new Error(
+    `\`${command.join(' ')}\` was killed after ${Date.now() - started}ms.\n` +
+      `--- stderr ---\n${stderr}\n--- stdout ---\n${stdout}`,
+  )
 }
 
 function makeResult(stdout: string, stderr: string, exitCode: number): RunResult {
@@ -239,7 +274,7 @@ export async function runCliWithTty(
     'steps' in options
       ? options.steps
       : [{ answerWhen: options.answerWhen, keys: options.keys ?? '\r' }]
-  const timeoutMs = options.timeoutMs ?? 15_000
+  const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS
   // A loader that flips isTTY before handing off to the real bundle. argv[1]
   // is rewritten so the CLI's own argv parsing lines up as if run directly.
   const shim = join(sandbox.root, 'tty-shim.mjs')

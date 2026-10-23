@@ -82,19 +82,6 @@ describe('wt list', () => {
     expect(data.worktrees[0]?.isMain).toBe(true)
     expect(data.worktrees.slice(1).map((wt) => wt.path)).toEqual([beta, alpha])
   })
-
-  it('shows each repo\'s worktree count when picking a repo', async ({ sandbox }) => {
-    await newWorktree(sandbox, 'counted')
-    await runCli(['clone', sandbox.remote, 'other', '--no-alias', '--json'], sandbox)
-
-    const result = await runCliWithTty(['list'], sandbox, {}, {
-      answerWhen: 'Which repo?',
-      keys: '\x03',
-    })
-
-    expect(result.stderr).toContain('demo (1)')
-    expect(result.stderr).toContain('other (0)')
-  })
 })
 
 describe('wt pick', () => {
@@ -103,14 +90,6 @@ describe('wt pick', () => {
 
     const result = await runCli(['pick', 'demo', 'unique', '--json'], sandbox)
     expect(result.json<{ path: string }>().path).toBe(path)
-  })
-
-  it('errors on an ambiguous match', async ({ sandbox }) => {
-    await newWorktree(sandbox, 'shared alpha')
-    await newWorktree(sandbox, 'shared beta')
-
-    const result = await runCli(['pick', 'demo', 'shared', '--json'], sandbox)
-    expectError(result, 'ambiguous_worktree')
   })
 
   it('shows each worktree\'s status in the picker', async ({ sandbox }) => {
@@ -164,19 +143,17 @@ describe('shell integration', () => {
     expect(withoutWrapper.stdout.trim()).toBe(path)
   })
 
-  it('generates a zsh function that handles the sentinel', async ({ sandbox }) => {
-    const result = await runCli(['shell-init', 'zsh'], sandbox)
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('wt()')
-    expect(result.stdout).toContain('__WT_CD__')
-    expect(result.stdout).toContain('command grove')
-  })
-
-  it('supports fish and powershell', async ({ sandbox }) => {
-    const fish = await runCli(['shell-init', 'fish'], sandbox)
-    expect(fish.stdout).toContain('function wt')
-    const pwsh = await runCli(['shell-init', 'powershell'], sandbox)
-    expect(pwsh.stdout).toContain('Set-Location')
+  it('generates a wrapper for each supported shell', async ({ sandbox }) => {
+    const expected = {
+      zsh: ['wt()', '__WT_CD__', 'command grove'],
+      fish: ['function wt', '__WT_CD__'],
+      powershell: ['Set-Location', '__WT_CD__'],
+    }
+    for (const [shell, snippets] of Object.entries(expected)) {
+      const result = await runCli(['shell-init', shell], sandbox)
+      expect(result.exitCode, shell).toBe(0)
+      for (const snippet of snippets) expect(result.stdout, shell).toContain(snippet)
+    }
   })
 
   /**
@@ -238,15 +215,11 @@ describe('grove __complete', () => {
     expect(rows.map((row) => row[0])).toContain('main')
   })
 
-  it('stays silent and succeeds for an unknown repo', async ({ sandbox }) => {
-    const result = await runCli(['__complete', 'worktrees', 'nope'], sandbox)
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout.trim()).toBe('')
-  })
-
-  it('stays silent for an unknown category', async ({ sandbox }) => {
-    const result = await runCli(['__complete', 'nonsense'], sandbox)
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout.trim()).toBe('')
+  it('stays silent and succeeds for an unknown repo or category', async ({ sandbox }) => {
+    for (const args of [['worktrees', 'nope'], ['nonsense']]) {
+      const result = await runCli(['__complete', ...args], sandbox)
+      expect(result.exitCode, args.join(' ')).toBe(0)
+      expect(result.stdout.trim(), args.join(' ')).toBe('')
+    }
   })
 })

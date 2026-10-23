@@ -68,30 +68,25 @@ describe('wt cleanup', () => {
     expect(existsSync(path)).toBe(true)
   })
 
-  it('skips a dirty worktree unless forced', async ({ sandbox }) => {
+  it('skips a dirty worktree under --yes, and removes it with --force', async ({ sandbox }) => {
     const { path } = await newWorktree(sandbox, 'has work')
     await writeFile(join(path, 'wip.txt'), 'important\n')
 
-    const result = await runCli(
+    const skipped = await runCli(
       ['cleanup', 'demo', path, '--yes', '--no-trash', '--json'],
       sandbox,
     )
-    const data = result.json<{ removed: unknown[]; skipped: { reason: string }[] }>()
+    const data = skipped.json<{ removed: unknown[]; skipped: { reason: string }[] }>()
     // A skipped worktree must not be listed under `removed`.
     expect(data.removed).toEqual([])
     expect(data.skipped[0]?.reason).toMatch(/--force/)
     expect(existsSync(path)).toBe(true)
-  })
 
-  it('removes a dirty worktree with --force', async ({ sandbox }) => {
-    const { path } = await newWorktree(sandbox, 'force me')
-    await writeFile(join(path, 'wip.txt'), 'disposable\n')
-
-    const result = await runCli(
+    const forced = await runCli(
       ['cleanup', 'demo', path, '--force', '--no-trash', '--json'],
       sandbox,
     )
-    expect(result.json<{ removed: unknown[] }>().removed).toHaveLength(1)
+    expect(forced.json<{ removed: unknown[] }>().removed).toHaveLength(1)
     expect(existsSync(path)).toBe(false)
   })
 

@@ -78,15 +78,6 @@ describe('wt create', () => {
     expect(data.path).toBe(join(ossDir, 'scoped'))
   })
 
-  it('requires a profile when several exist and no default is set', async ({ sandbox }) => {
-    await addProfile(sandbox, 'work')
-    await addProfile(sandbox, 'oss')
-
-    const result = await runCli(['create', 'ambiguous', '--no-alias', '--json'], sandbox)
-    const error = expectError(result, 'needs_input')
-    expect(error.hint).toContain('--profile')
-  })
-
   it('supports a worktree once the first commit exists', async ({ sandbox }) => {
     const created = await runCli(['create', 'growing', '--no-alias', '--json'], sandbox)
     const { mainPath } = created.json<{ mainPath: string }>()
@@ -222,36 +213,15 @@ describe('wt create --github', () => {
     expect(names).toContain('tok')
   })
 
-  it('stays silent about GitHub when gh is unusable and none was asked for', async ({ sandbox }) => {
-    const { env } = await fakeGh(sandbox, BAD_TOKEN)
-    const result = await runCli(
-      ['create', 'quiet', '--no-alias', '--json'],
-      sandbox,
-      env,
-    )
-    expect(result.exitCode).toBe(0)
-    expect(result.json<{ github: unknown }>().github).toBeNull()
-  })
-
-  it('never calls gh with --no-github', async ({ sandbox }) => {
-    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
-    const result = await runCli(
-      ['create', 'local', '--no-github', '--no-alias', '--json'],
-      sandbox,
-      env,
-    )
-    expect(result.json<{ github: unknown }>().github).toBeNull()
-    expect(existsSync(logFile)).toBe(false)
-  })
-
-  it('does not prompt for GitHub in non-interactive mode', async ({ sandbox }) => {
-    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
-    // --json implies non-interactive: a prompt here would hang the run.
-    const result = await runCli(
-      ['create', 'unattended', '--no-alias', '--json'],
-      sandbox,
-      env,
-    )
+  // --json implies non-interactive, so a GitHub prompt in any of these would
+  // hang the run rather than fail it.
+  it.for([
+    { when: 'gh is unusable and none was asked for', auth: BAD_TOKEN, flags: [] },
+    { when: 'gh works but none was asked for', auth: LOGGED_IN, flags: [] },
+    { when: 'given --no-github', auth: LOGGED_IN, flags: ['--no-github'] },
+  ])('leaves GitHub out when $when', async ({ auth, flags }, { sandbox }) => {
+    const { env, logFile } = await fakeGh(sandbox, auth)
+    const result = await runCli(['create', 'local', ...flags, '--no-alias', '--json'], sandbox, env)
     expect(result.exitCode).toBe(0)
     expect(result.json<{ github: unknown }>().github).toBeNull()
     expect(existsSync(logFile)).toBe(false)

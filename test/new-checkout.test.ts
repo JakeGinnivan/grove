@@ -21,15 +21,15 @@ describe('wt new', () => {
     )
   })
 
-  it('includes a Jira key in the branch and directory names', async ({ sandbox }) => {
-    const data = await newWorktree(sandbox, 'fix login', '--jira', 'ABC-123')
-    expect(data.branch).toBe('test/ABC-123-fix-login')
-    expect(data.path).toMatch(/-fix-login-ABC-123$/)
-  })
+  // How a key shapes the names is unit-tested in naming.test.ts; this covers
+  // both ways one reaches `new`.
+  it('takes a Jira key from --jira or from the title', async ({ sandbox }) => {
+    const given = await newWorktree(sandbox, 'fix login', '--jira', 'ABC-123')
+    expect(given.branch).toBe('test/ABC-123-fix-login')
+    expect(given.path).toMatch(/-fix-login-ABC-123$/)
 
-  it('infers a Jira key present in the title', async ({ sandbox }) => {
-    const data = await newWorktree(sandbox, 'ABC-9 fix login')
-    expect(data.branch).toBe('test/ABC-9-fix-login')
+    const inferred = await newWorktree(sandbox, 'ABC-9 fix login')
+    expect(inferred.branch).toBe('test/ABC-9-fix-login')
   })
 
   it('takes a GitHub issue number with --issue', async ({ sandbox }) => {
@@ -229,8 +229,7 @@ describe('wt new --on (stacking)', () => {
 })
 
 describe('wt checkout', () => {
-  it('checks out an existing remote branch into a new worktree', async ({ sandbox }) => {
-    // Publish a branch to the remote from an independent clone.
+  it('checks out a remote branch into a new worktree that tracks it', async ({ sandbox }) => {
     await pushCommit(sandbox, { branch: 'colleague/feature', file: 'theirs.txt' })
 
     const result = await runCli(
@@ -244,18 +243,9 @@ describe('wt checkout', () => {
     expect(await gitIn(['rev-parse', '--abbrev-ref', 'HEAD'], data.path)).toBe(
       'colleague/feature',
     )
-  })
-
-  it('sets upstream tracking for a remote branch', async ({ sandbox }) => {
-    await pushCommit(sandbox, { branch: 'tracked' })
-
-    const result = await runCli(['checkout', 'demo', 'tracked', '--json'], sandbox)
-    const data = result.json<{ path: string }>()
-    const upstream = await gitIn(
-      ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
-      data.path,
-    )
-    expect(upstream).toBe('origin/tracked')
+    expect(
+      await gitIn(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], data.path),
+    ).toBe('origin/colleague/feature')
   })
 
   it('fails for an unknown branch without --create', async ({ sandbox }) => {

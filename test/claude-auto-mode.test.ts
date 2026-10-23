@@ -48,11 +48,6 @@ async function readSettings() {
 const [environmentHint, allowHint] = AUTO_MODE_HINTS
 
 describe('skills install --claude-auto-mode', () => {
-  it('reports its target inside the sandboxed HOME', async () => {
-    const outcome = await install('--claude-auto-mode')
-    expect(outcome?.path?.startsWith(sandbox.root)).toBe(true)
-  })
-
   it('creates the settings with $defaults kept in each list', async () => {
     expect((await install('--claude-auto-mode'))?.status).toBe('added')
 

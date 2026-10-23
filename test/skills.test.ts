@@ -23,7 +23,7 @@ interface InstallTargets {
 }
 
 describe('wt skills install', () => {
-  it('installs skill files into the target directory', async ({ sandbox }) => {
+  it('installs every skill, with valid frontmatter, into the target directory', async ({ sandbox }) => {
     const target = join(sandbox.root, 'skills-target')
     const result = await runCli(
       ['skills', 'install', '--target', target, '--json'],
@@ -34,7 +34,11 @@ describe('wt skills install', () => {
     expect(data.targets).toHaveLength(1)
     expect(data.targets[0]!.installed.sort()).toEqual(SKILLS)
     for (const name of SKILLS) {
-      expect(existsSync(join(target, name, 'SKILL.md'))).toBe(true)
+      const content = await readFile(join(target, name, 'SKILL.md'), 'utf8')
+      // git may check the template out with CRLF endings on Windows.
+      expect(content.replace(/\r\n/g, '\n')).toMatch(
+        new RegExp(`^---\\nname: ${name}\\ndescription: .+`, 'm'),
+      )
     }
   })
 
@@ -98,17 +102,5 @@ describe('wt skills install', () => {
       sandbox,
     )
     expect(await readFile(file, 'utf8')).not.toBe('clobbered\n')
-  })
-
-  it('writes skills with valid frontmatter', async ({ sandbox }) => {
-    const target = join(sandbox.root, 'skills-target')
-    await runCli(['skills', 'install', '--target', target, '--json'], sandbox)
-    for (const name of SKILLS) {
-      const content = await readFile(join(target, name, 'SKILL.md'), 'utf8')
-      // git may check the template out with CRLF endings on Windows.
-      expect(content.replace(/\r\n/g, '\n')).toMatch(
-        new RegExp(`^---\\nname: ${name}\\ndescription: .+`, 'm'),
-      )
-    }
   })
 })

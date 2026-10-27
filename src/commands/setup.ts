@@ -1,12 +1,12 @@
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
 import {
   loadConfig,
   saveConfig,
   profileList,
   expandHome,
+  tildify,
   CONFIG_PATH,
   type GroveConfig,
 } from '../core/config.js'
@@ -28,7 +28,13 @@ import {
 } from '../core/trackers.js'
 import { CancelledError, WtError } from '../core/errors.js'
 import { emitJson, log, success, getOutputContext } from '../core/output.js'
-import { resolve, sep } from 'node:path'
+import {
+  detectShell,
+  installShellIntegration,
+  shellIntegrationStatus,
+  type ShellIntegrationStatus,
+} from '../core/shell-rc.js'
+import { resolve } from 'node:path'
 
 export function setupCommand(): Command {
   return new Command('setup')
@@ -79,20 +85,28 @@ async function runSetup(options: SetupOptions): Promise<void> {
   // never meet a prompt. Without flags, a terminal gets the menu; anything
   // else writes the current (or default) config as-is.
   let next: GroveConfig
+  let installShell = false
   if (hasFlags) {
     next = applyFlags(current, options)
   } else if (canPrompt()) {
-    const edited = await settingsMenu(current)
+    const edited = await settingsMenu(current, await shellIntegrationStatus(detectShell()))
     if (!edited) return
-    next = edited
+    next = edited.config
+    installShell = edited.installShell
   } else {
     next = current
+  }
+
+  if (installShell) {
+    const result = await installShellIntegration(detectShell(), { name: 'wt', completions: true })
+    success(`Added shell integration to ${tildify(result.rcFile)}`)
+    log(`  Open a new terminal, or run: source ${tildify(result.rcFile)}`)
   }
 
   if (!firstRun && sameSettings(current, next)) {
     if (getOutputContext().json) {
       emitJson({ ok: true, configPath: CONFIG_PATH, config: next, changed: false })
-    } else {
+    } else if (!installShell) {
       log('No changes.')
     }
     return
@@ -106,7 +120,7 @@ async function runSetup(options: SetupOptions): Promise<void> {
   }
 
   success(`Wrote ${CONFIG_PATH}`)
-  if (firstRun) printNextSteps()
+  if (firstRun) printNextSteps(await shellIntegrationStatus(detectShell()))
 }
 
 function showConfig(config: GroveConfig): void {
@@ -153,12 +167,6 @@ function resolvePath(path: string): string {
   return resolve(expandHome(path))
 }
 
-/** Show ~ for the home directory so paths fit in the menu. */
-function tildify(path: string): string {
-  const home = homedir()
-  return path === home || path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path
-}
-
 type SettingKey =
   | 'branchPrefix'
   | 'defaultCodeDir'
@@ -199,15 +207,24 @@ function sameSettings(a: GroveConfig, b: GroveConfig): boolean {
 }
 
 const DONE = '__done__'
+const SHELL = '__shell__'
+const SHELL_LABEL = 'Shell integration'
 
 /**
  * A menu of every setting with its current value. Picking one edits just
  * that setting and returns to the menu; Done saves. Returns undefined when
  * the user backs out of the menu itself, which discards the edits.
+ *
+ * Shell integration is not a config value, but it belongs in first-time
+ * setup. Like the settings it is only written on save.
  */
-async function settingsMenu(current: GroveConfig): Promise<GroveConfig | undefined> {
+async function settingsMenu(
+  current: GroveConfig,
+  shell: ShellIntegrationStatus,
+): Promise<{ config: GroveConfig; installShell: boolean } | undefined> {
   intro('Grove settings')
   let draft: GroveConfig = { ...current }
+  let installShell = false
   let cursor: string | undefined
 
   const keys: SettingKey[] = [
@@ -220,10 +237,17 @@ async function settingsMenu(current: GroveConfig): Promise<GroveConfig | undefin
   // Profiles are added with `grove profile add`; only offer a default once
   // there is something to choose.
   if (profileList(current).length > 0) keys.push('defaultProfile')
-  const width = Math.max(...keys.map((key) => SETTING_LABELS[key].length)) + 2
+  const width =
+    Math.max(SHELL_LABEL.length, ...keys.map((key) => SETTING_LABELS[key].length)) + 2
+  const shellValue = () =>
+    shell.installedIn
+      ? `installed in ${tildify(shell.installedIn)}`
+      : installShell
+        ? `will add to ${tildify(shell.rcFile)}`
+        : 'not installed'
 
   for (;;) {
-    const changed = !sameSettings(current, draft)
+    const changed = !sameSettings(current, draft) || installShell
     let choice: string
     try {
       choice = await select(
@@ -233,6 +257,7 @@ async function settingsMenu(current: GroveConfig): Promise<GroveConfig | undefin
             value: key,
             label: `${SETTING_LABELS[key].padEnd(width)}${pc.dim(settingValue(draft, key))}`,
           })),
+          { value: SHELL, label: `${SHELL_LABEL.padEnd(width)}${pc.dim(shellValue())}` },
           { value: DONE, label: changed ? 'Save and exit' : 'Done' },
         ],
         'A setting',
@@ -246,11 +271,19 @@ async function settingsMenu(current: GroveConfig): Promise<GroveConfig | undefin
 
     if (choice === DONE) {
       outro(changed ? 'Saving.' : 'No changes.')
-      return draft
+      return { config: draft, installShell }
     }
 
     cursor = choice
     try {
+      if (choice === SHELL) {
+        if (shell.installedIn) continue
+        installShell = await confirm(
+          `Add the \`wt\` command and completions to ${tildify(shell.rcFile)}?`,
+          { assumeYes: false, defaultValue: true },
+        )
+        continue
+      }
       draft = await editSetting(choice as SettingKey, draft)
     } catch (error) {
       // Escape in a single setting goes back to the menu, not out of setup.
@@ -337,13 +370,13 @@ async function editSetting(key: SettingKey, draft: GroveConfig): Promise<GroveCo
   }
 }
 
-function printNextSteps(): void {
+function printNextSteps(shell: ShellIntegrationStatus): void {
   log()
-  log(pc.bold('Add shell integration for the `wt` shortcut and completions:'))
-  log()
-  log(pc.cyan('  # ~/.zshrc'))
-  log(pc.cyan('  eval "$(grove shell-init zsh)"'))
-  log()
+  if (!shell.installedIn) {
+    log(pc.bold('Add shell integration for the `wt` shortcut and completions:'))
+    log(pc.cyan('  grove shell-init --install'))
+    log()
+  }
   log(pc.bold('Optional — group repos into profiles with their own rules:'))
   log(pc.cyan('  grove profile add work ~/_code/work --default'))
   log()

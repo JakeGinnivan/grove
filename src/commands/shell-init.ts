@@ -1,6 +1,13 @@
 import { Command } from 'commander'
-import { CD_SENTINEL } from '../core/output.js'
-import { WtError } from '../core/errors.js'
+import { tildify } from '../core/config.js'
+import { CD_SENTINEL, emitJson, getOutputContext, info, log, success } from '../core/output.js'
+import {
+  detectShell,
+  installShellIntegration,
+  parseShell,
+  type InitOptions,
+  type Shell,
+} from '../core/shell-rc.js'
 import { TARGET_NAMES } from './skills.js'
 
 /** Agent tools offered as `--target` completions. */
@@ -17,26 +24,40 @@ export function shellInitCommand(): Command {
     .argument('[shell]', 'zsh, bash, fish, or powershell (default: auto)')
     .option('--name <name>', 'name for the shell function', 'wt')
     .option('--no-completions', 'emit only the function, without completions')
-    .action((shellArg: string | undefined, options: ShellInitOptions) => {
-      const shell = shellArg ?? detectShell()
+    .option('--install', "add the integration to your shell's startup file")
+    .action(async (shellArg: string | undefined, options: ShellInitOptions) => {
+      const shell = shellArg === undefined ? detectShell() : parseShell(shellArg)
+      if (options.install) {
+        await runInstall(shell, options)
+        return
+      }
       process.stdout.write(`${scriptFor(shell, options)}\n`)
     })
 }
 
-interface ShellInitOptions {
-  name: string
-  completions: boolean
+interface ShellInitOptions extends InitOptions {
+  install?: boolean
 }
 
-function detectShell(): string {
-  if (process.platform === 'win32') return 'powershell'
-  const shellPath = process.env['SHELL'] ?? ''
-  if (shellPath.includes('fish')) return 'fish'
-  if (shellPath.includes('bash')) return 'bash'
-  return 'zsh'
+async function runInstall(shell: Shell, options: InitOptions): Promise<void> {
+  const result = await installShellIntegration(shell, options)
+  if (getOutputContext().json) {
+    emitJson({ ok: true, ...result })
+    return
+  }
+  if (!result.changed) {
+    info(`Shell integration is already in ${tildify(result.installedIn!)}`)
+    return
+  }
+  success(`Added shell integration to ${tildify(result.rcFile)}`)
+  log(`  Open a new terminal, or run: ${reloadCommand(shell, result.rcFile)}`)
 }
 
-function scriptFor(shell: string, options: ShellInitOptions): string {
+function reloadCommand(shell: Shell, rcFile: string): string {
+  return shell === 'powershell' ? `. $PROFILE` : `source ${tildify(rcFile)}`
+}
+
+function scriptFor(shell: Shell, options: InitOptions): string {
   switch (shell) {
     case 'zsh':
       return [zshFunction(options.name), options.completions ? zshCompletions(options.name) : '']
@@ -51,18 +72,12 @@ function scriptFor(shell: string, options: ShellInitOptions): string {
         .filter(Boolean)
         .join('\n\n')
     case 'powershell':
-    case 'pwsh':
       return [
         powershellFunction(options.name),
         options.completions ? powershellCompletions(options.name) : '',
       ]
         .filter(Boolean)
         .join('\n\n')
-    default:
-      throw new WtError(`Unsupported shell: ${shell}`, {
-        code: 'unsupported_shell',
-        hint: 'Supported: zsh, bash, fish, powershell.',
-      })
   }
 }
 

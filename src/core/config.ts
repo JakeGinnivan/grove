@@ -87,6 +87,12 @@ export function expandHome(path: string): string {
   return path
 }
 
+/** Show ~ for the home directory, the reverse of `expandHome`. */
+export function tildify(path: string): string {
+  const home = homedir()
+  return path === home || path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path
+}
+
 /**
  * Load the config file over the defaults. `env: false` skips the environment
  * overrides, for callers that save the result back: otherwise a value set

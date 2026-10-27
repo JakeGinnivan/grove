@@ -5,10 +5,12 @@
 #
 # Usage: create-release.sh <tag> <version> <stage-id-or-empty> [changelog-path]
 #
-# Must be run after github.sh is sourced: it uses github_api and REPO.
+# Runs in its own shell, so load github_api and REPO here even when the
+# caller has already sourced github.sh.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/github.sh"
 
 TAG="$1"
 VERSION="$2"

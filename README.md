@@ -22,24 +22,21 @@ non-interactively so coding agents can drive it.
 npm install -g @jakeginnivan/grove
 ```
 
-**2. Add the shell integration**, which gives you the `wt` shortcut with
-<kbd>Tab</kbd> completion and lets it change your directory:
-
-```bash
-# ~/.zshrc — after compinit
-eval "$(grove shell-init zsh)"
-```
-
-Bash, fish and PowerShell work too: pass `bash`, `fish` or `pwsh`, or leave the
-shell name off to auto-detect.
-
-**3. Configure** your branch prefix, clone directory and task trackers:
+**2. Configure** your branch prefix, clone directory and task trackers, and
+add the shell integration:
 
 ```bash
 grove setup
 ```
 
-**4. Install the agent skills** (optional, if you use Claude Code, Codex,
+The shell integration gives you the `wt` shortcut, with <kbd>Tab</kbd>
+completion, and lets it change your directory. Pick **Shell integration** in
+the menu to add it to your shell's startup file, or run
+`grove shell-init --install` on its own. zsh, bash, fish and PowerShell are
+supported. See [Configuration](docs/usage/configuration.md#shell-integration)
+for the line it adds, if you'd rather add it yourself.
+
+**3. Install the agent skills** (optional, if you use Claude Code, Codex,
 Copilot CLI, Gemini CLI, Cursor or opencode):
 
 ```bash

@@ -50,13 +50,30 @@ The older `WT_*` names are still honoured.
 ## Shell integration
 
 ```bash
-# ~/.zshrc — after your compinit
-eval "$(grove shell-init zsh)"
+grove shell-init --install
 ```
 
-That defines a `wt` function which changes directory and completes repo names,
-worktrees, branches, and profiles on <kbd>Tab</kbd>. Bash, fish, and PowerShell
-are also supported — pass the shell name, or omit it to auto-detect.
+That adds a line to your shell's startup file which defines a `wt` function.
+The function changes directory and completes repo names, worktrees, branches
+and profiles on <kbd>Tab</kbd>. The **Shell integration** entry in
+`grove setup` does the same.
+
+The shell is detected from `$SHELL` (PowerShell on Windows); pass one to
+override it, as in `grove shell-init bash --install`. Install does nothing if
+any of the files below already mention `grove shell-init`, so running it twice
+is safe and a line you added yourself is respected.
+
+| Shell | Written to | Line |
+| --- | --- | --- |
+| zsh | `$ZDOTDIR/.zshrc` (or `~/.zshrc`) | `eval "$(grove shell-init zsh)"` |
+| bash | `~/.bash_profile` on macOS, `~/.bashrc` elsewhere (the other is also checked) | `eval "$(grove shell-init bash)"` |
+| fish | `~/.config/fish/conf.d/grove.fish` (`config.fish` is also checked) | `grove shell-init fish \| source` |
+| PowerShell 7 | `$PROFILE` | `Invoke-Expression (& grove shell-init powershell \| Out-String)` |
+
+The line is appended to the end of the file, which in zsh puts it after
+`compinit`. `--name <name>` and `--no-completions` are carried into the line.
+To add it by hand instead, print the script with `grove shell-init <shell>`
+and put the line from the table in your startup file yourself.
 
 A child process cannot change its parent shell's working directory, so `grove`
 prints a sentinel line and the generated `wt` function performs the `cd`. This

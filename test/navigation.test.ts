@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   runCli,
@@ -154,6 +154,51 @@ describe('shell integration', () => {
       expect(result.exitCode, shell).toBe(0)
       for (const snippet of snippets) expect(result.stdout, shell).toContain(snippet)
     }
+  })
+
+  // Empty, so the developer's own ZDOTDIR or XDG_CONFIG_HOME cannot move the
+  // startup file out of the sandbox.
+  const rcEnv = { ZDOTDIR: '', XDG_CONFIG_HOME: '' }
+
+  it('installs into the startup file once', async ({ sandbox }) => {
+    const zshrc = join(sandbox.root, '.zshrc')
+    await writeFile(zshrc, 'autoload -U compinit && compinit')
+
+    const first = await runCli(['shell-init', 'zsh', '--install', '--json'], sandbox, rcEnv)
+    expect(first.json()).toMatchObject({ ok: true, rcFile: zshrc, changed: true })
+    const again = await runCli(['shell-init', 'zsh', '--install', '--json'], sandbox, rcEnv)
+    expect(again.json()).toMatchObject({ changed: false, installedIn: zshrc })
+
+    // Appended after compinit, on a line of its own, and only once.
+    expect(await readFile(zshrc, 'utf8')).toBe(
+      'autoload -U compinit && compinit\n\n' +
+        '# grove shell integration: the `wt` command and completions\n' +
+        'eval "$(grove shell-init zsh)"\n',
+    )
+  })
+
+  it('leaves a hand-written integration line alone', async ({ sandbox }) => {
+    const configFish = join(sandbox.root, '.config', 'fish', 'config.fish')
+    await mkdir(join(sandbox.root, '.config', 'fish'), { recursive: true })
+    await writeFile(configFish, 'grove shell-init fish --name g | source\n')
+
+    const result = await runCli(['shell-init', 'fish', '--install', '--json'], sandbox, rcEnv)
+    expect(result.json()).toMatchObject({ changed: false, installedIn: configFish })
+  })
+
+  it('installs fish into a conf.d file of its own', async ({ sandbox }) => {
+    const result = await runCli(
+      ['shell-init', 'fish', '--install', '--name', 'g', '--json'],
+      sandbox,
+      rcEnv,
+    )
+    const confD = join(sandbox.root, '.config', 'fish', 'conf.d', 'grove.fish')
+    expect(result.json()).toMatchObject({ rcFile: confD, changed: true })
+    expect(await readFile(confD, 'utf8')).toContain('grove shell-init fish --name g | source\n')
+  })
+
+  it('rejects an unknown shell', async ({ sandbox }) => {
+    expectError(await runCli(['shell-init', 'tcsh', '--install', '--json'], sandbox), 'unsupported_shell')
   })
 
   /**

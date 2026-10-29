@@ -112,11 +112,15 @@ wt cleanup my-service                    # interactive multi-select
 wt cleanup my-service --merged --yes     # everything already merged
 wt cleanup my-service 260810-old --yes   # a specific worktree
 wt cleanup self                          # the worktree you are standing in
+wt cleanup --all                         # pick from every repo at once
+wt cleanup --all --merged --yes          # everything merged, in every repo
 ```
 
 Without a repo, `cleanup` (and `list`) asks which one, showing how many
-worktrees each has. In the multi-select, `a` selects every worktree, or none
-when they are all selected already.
+worktrees each has. `cleanup` lists "All repos" first, the same as `--all`:
+one multi-select with every repo's worktrees, grouped by repo. In the
+multi-select, `a` selects every worktree, or none when they are all selected
+already.
 
 Worktrees with uncommitted changes or unpushed commits are **skipped** unless
 you pass `--force`, and `--yes` alone will not override that. `--dry-run`

@@ -2,14 +2,14 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolve, basename, dirname } from 'node:path'
 import { samePath } from '../core/paths.js'
-import { loadConfig } from '../core/config.js'
-import { resolveRepo, gitDirFor } from '../core/registry.js'
+import { loadConfig, type GroveConfig } from '../core/config.js'
+import { resolveRepo, gitDirFor, readRegistry } from '../core/registry.js'
 import { git, listWorktrees, localBranchExists, removeConfigSection } from '../core/git.js'
 import { moveToTrash, purgeLocalTrash } from '../core/trash.js'
 import { groupMultiselect, multiselect, confirm } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
-import { pickRepo, withViewOptions } from './shared.js'
+import { ALL_REPOS, pickRepo, withViewOptions } from './shared.js'
 import {
   loadWorktrees,
   arrange,
@@ -30,6 +30,7 @@ export function cleanupCommand(): Command {
     .description('Remove finished worktrees')
     .argument('[repo]', 'registered repo name, or "self" for the current one')
     .argument('[worktrees...]', 'worktree directories or branches to remove')
+    .option('--all', 'pick from every registered repo\'s worktrees')
     .option('--merged', 'select every clean worktree that is merged or has no commits of its own')
     .option('--force', 'remove even when dirty or unmerged')
     .option('-y, --yes', 'skip confirmation prompts')
@@ -47,6 +48,7 @@ export function cleanupCommand(): Command {
 }
 
 export interface CleanupOptions extends ViewOptions {
+  all?: boolean
   merged?: boolean
   force?: boolean
   yes?: boolean
@@ -56,6 +58,8 @@ export interface CleanupOptions extends ViewOptions {
 }
 
 interface RemovalOutcome {
+  /** Set when removing from a picker, unset for `cleanup self`. */
+  repo?: string
   path: string
   branch: string | null
   removed: boolean
@@ -75,7 +79,8 @@ function partitionOutcomes(outcomes: RemovalOutcome[]) {
   return {
     removed: outcomes
       .filter((outcome) => outcome.removed)
-      .map(({ path, branch, trashed, trashDir, branchDeleted }) => ({
+      .map(({ repo, path, branch, trashed, trashDir, branchDeleted }) => ({
+        ...(repo ? { repo } : {}),
         path,
         branch,
         trashed,
@@ -84,7 +89,12 @@ function partitionOutcomes(outcomes: RemovalOutcome[]) {
       })),
     skipped: outcomes
       .filter((outcome) => !outcome.removed)
-      .map(({ path, branch, skipped }) => ({ path, branch, reason: skipped ?? 'not removed' })),
+      .map(({ repo, path, branch, skipped }) => ({
+        ...(repo ? { repo } : {}),
+        path,
+        branch,
+        reason: skipped ?? 'not removed',
+      })),
   }
 }
 
@@ -94,19 +104,28 @@ export async function runCleanup(
   options: CleanupOptions,
 ): Promise<void> {
   const config = await loadConfig()
-  const repoName = await pickRepo(config.reposFile, repoArg, { worktreeCounts: true })
+  if (options.all && (repoArg !== undefined || worktreeArgs.length > 0)) {
+    throw new WtError('--all takes no repo or worktree arguments.', {
+      code: 'conflicting_arguments',
+      hint: 'Drop --all to clean up one repo, or drop the arguments to pick from every repo.',
+    })
+  }
+  const repoName = options.all
+    ? ALL_REPOS
+    : await pickRepo(config.reposFile, repoArg, { worktreeCounts: true, includeAll: true })
+  if (repoName === ALL_REPOS) {
+    await runCleanupAll(config, options)
+    return
+  }
   const repo = await resolveRepo(config.reposFile, repoName)
   const gitDir = await gitDirFor(repo.path)
 
   const arranged = arrange(await loadWorktrees(gitDir, { status: true }), options)
   const candidates = flatten({ main: undefined, groups: arranged.groups })
+  const scope = { repo: repo.name }
 
   if (candidates.length === 0) {
-    if (getOutputContext().json) {
-      emitJson({ ok: true, repo: repo.name, removed: [], skipped: [] })
-      return
-    }
-    log('No removable worktrees found.')
+    nothingToRemove(scope, 'No removable worktrees found.')
     return
   }
 
@@ -119,11 +138,7 @@ export async function runCleanup(
   } else if (options.merged) {
     selected = candidates.filter(isSafeToRemove)
     if (selected.length === 0) {
-      if (getOutputContext().json) {
-        emitJson({ ok: true, repo: repo.name, removed: [], skipped: [] })
-        return
-      }
-      log('No merged worktrees to clean up.')
+      nothingToRemove(scope, 'No merged worktrees to clean up.')
       return
     }
   } else {
@@ -156,18 +171,130 @@ export async function runCleanup(
     selected = candidates.filter((report) => chosen.includes(report.path))
   }
 
-  if (selected.length === 0) {
+  await removeTargets(
+    selected.map((report) => ({ repo: repo.name, gitDir, report })),
+    scope,
+    config.useTrash,
+    options,
+  )
+}
+
+/** A worktree picked for removal, and the repo it belongs to. */
+interface Target {
+  repo: string
+  gitDir: string
+  report: WorktreeReport
+}
+
+/** JSON's top level names the one repo cleaned up, or every repo looked at. */
+type Scope = { repo: string } | { repos: string[] }
+
+function nothingToRemove(scope: Scope, message: string): void {
+  if (getOutputContext().json) {
+    emitJson({ ok: true, ...scope, removed: [], skipped: [] })
+    return
+  }
+  log(message)
+}
+
+/**
+ * `cleanup --all`, or "All repos" in the repo picker: one picker over every
+ * repo's worktrees, grouped by repo instead of by status.
+ */
+async function runCleanupAll(config: GroveConfig, options: CleanupOptions): Promise<void> {
+  const entries = (await readRegistry(config.reposFile)).filter((entry) => !entry.aliasOf)
+  if (entries.length === 0) {
+    throw new WtError('No repos registered.', {
+      code: 'no_repos',
+      hint: 'Use `wt clone <url>` or `wt import <path>` first.',
+    })
+  }
+
+  const loaded = await Promise.all(
+    entries.map(async (entry) => {
+      try {
+        const gitDir = await gitDirFor(entry.path)
+        const arranged = arrange(await loadWorktrees(gitDir, { status: true }), options)
+        const reports = flatten({ main: undefined, groups: arranged.groups })
+        return { name: entry.name, gitDir, reports }
+      } catch (error) {
+        // One broken registry entry must not block cleaning up the rest.
+        warn(`Skipping ${entry.name}: ${error instanceof Error ? error.message : String(error)}`)
+        return undefined
+      }
+    }),
+  )
+  const repos = loaded.filter(
+    (repo): repo is NonNullable<typeof repo> => repo !== undefined && repo.reports.length > 0,
+  )
+  const scope = { repos: repos.map((repo) => repo.name) }
+  const candidates: Target[] = repos.flatMap((repo) =>
+    repo.reports.map((report) => ({ repo: repo.name, gitDir: repo.gitDir, report })),
+  )
+
+  if (candidates.length === 0) {
+    nothingToRemove(scope, 'No removable worktrees found.')
+    return
+  }
+
+  let selected: Target[]
+  if (options.merged) {
+    selected = candidates.filter((target) => isSafeToRemove(target.report))
+    if (selected.length === 0) {
+      nothingToRemove(scope, 'No merged worktrees to clean up.')
+      return
+    }
+  } else {
+    const widths = rowWidths(
+      candidates.map((target) => target.report),
+      { status: true },
+    )
+    const chosen = await groupMultiselect(
+      'Select worktrees to remove',
+      Object.fromEntries(
+        repos.map((repo) => [
+          `${repo.name} (${repo.reports.length})`,
+          repo.reports.map((report) => ({
+            value: report.path,
+            label: rowLabel(report, widths).trimEnd(),
+          })),
+        ]),
+      ),
+      'Worktree names',
+      candidates
+        .filter((target) => isSafeToRemove(target.report))
+        .map((target) => target.report.path),
+    )
+    selected = candidates.filter((target) => chosen.includes(target.report.path))
+  }
+
+  await removeTargets(selected, scope, config.useTrash, options)
+}
+
+async function removeTargets(
+  targets: Target[],
+  scope: Scope,
+  configUseTrash: boolean,
+  options: CleanupOptions,
+): Promise<void> {
+  if (targets.length === 0) {
     log('Nothing selected.')
     return
   }
+
+  const repoCount = new Set(targets.map((target) => target.repo)).size
+  // Across repos, worktree directory names alone can be ambiguous.
+  const name = (repo: string | undefined, path: string) =>
+    'repos' in scope && repo ? `${repo}/${basename(path)}` : basename(path)
 
   if (options.dryRun) {
     if (getOutputContext().json) {
       emitJson({
         ok: true,
         dryRun: true,
-        repo: repo.name,
-        wouldRemove: selected.map((report) => ({
+        ...scope,
+        wouldRemove: targets.map(({ repo, report }) => ({
+          repo,
           path: report.path,
           branch: report.branch,
           dirty: report.dirty,
@@ -178,14 +305,15 @@ export async function runCleanup(
     }
     log()
     log(pc.bold('Would remove:'))
-    for (const report of selected) {
-      log(`  ${report.dir}  ${pc.dim(describeStatus(report))}`)
+    for (const { repo, report } of targets) {
+      log(`  ${name(repo, report.path)}  ${pc.dim(describeStatus(report))}`)
     }
     log()
     return
   }
 
-  const proceed = await confirm(`Remove ${selected.length} worktree(s)?`, {
+  const across = repoCount > 1 ? ` across ${repoCount} repos` : ''
+  const proceed = await confirm(`Remove ${targets.length} worktree(s)${across}?`, {
     assumeYes: (options.yes ?? false) || (options.force ?? false),
     defaultValue: false,
     what: 'Removing worktrees',
@@ -196,33 +324,32 @@ export async function runCleanup(
   }
 
   const outcomes: RemovalOutcome[] = []
-  const useTrash = options.trash && config.useTrash
-
-  for (const report of selected) {
-    outcomes.push(
-      await removeOne(gitDir, report, {
-        force: options.force ?? false,
-        deleteBranch: options.deleteBranch ?? false,
-        useTrash,
-      }),
-    )
+  const useTrash = options.trash && configUseTrash
+  for (const { repo, gitDir, report } of targets) {
+    const outcome = await removeOne(gitDir, report, {
+      force: options.force ?? false,
+      deleteBranch: options.deleteBranch ?? false,
+      useTrash,
+    })
+    outcomes.push({ ...outcome, repo })
   }
 
   if (getOutputContext().json) {
-    emitJson({ ok: true, repo: repo.name, ...partitionOutcomes(outcomes) })
+    emitJson({ ok: true, ...scope, ...partitionOutcomes(outcomes) })
     return
   }
 
   log()
   for (const outcome of outcomes) {
+    const label = name(outcome.repo, outcome.path)
     if (outcome.skipped) {
-      warn(`Skipped ${basename(outcome.path)}: ${outcome.skipped}`)
+      warn(`Skipped ${label}: ${outcome.skipped}`)
     } else {
       const suffix = trashNote(outcome)
       const branchNote = outcome.branchDeleted
         ? pc.dim(`, deleted branch ${outcome.branch}`)
         : ''
-      success(`Removed ${basename(outcome.path)}${suffix}${branchNote}`)
+      success(`Removed ${label}${suffix}${branchNote}`)
     }
   }
   log()

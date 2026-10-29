@@ -1,6 +1,6 @@
 import * as clack from '@clack/prompts'
 import { GroupMultiSelectPrompt } from '@clack/core'
-import pc from 'picocolors'
+import { styleText } from 'node:util'
 import { CancelledError, NeedsInputError } from './errors.js'
 import { getOutputContext } from './output.js'
 
@@ -216,7 +216,7 @@ export async function multiselect(
   return guard(
     await clack.multiselect({
       ...PROMPT_STREAM,
-      message: withToggleAllHint(message),
+      message,
       options,
       required: false,
       ...(initialValues ? { initialValues } : {}),
@@ -246,7 +246,7 @@ export async function groupMultiselect(
   const pending = withNextGroupPrompt(bindToggleAll, () =>
     clack.groupMultiselect({
       ...PROMPT_STREAM,
-      message: withToggleAllHint(message),
+      message,
       options: nonEmpty,
       required: false,
       ...(initialValues ? { initialValues } : {}),
@@ -255,10 +255,22 @@ export async function groupMultiselect(
   return guard(await pending)
 }
 
-/** clack's flat multiselect binds `a` to select all / none, but never says so. */
-function withToggleAllHint(message: string): string {
-  return `${message} ${pc.dim('(a: all / none)')}`
+/**
+ * clack's flat multiselect binds `a` to select all / none, and we bind it on
+ * the grouped one, but clack's key footer never lists it. Both prompts render
+ * this shared, exported array, so add the key to it, before `Enter`. Styled
+ * with `styleText` at load time, as clack builds its own entries.
+ */
+function addToggleAllInstruction(): void {
+  const instructions = clack.MULTISELECT_INSTRUCTIONS
+  const enter = instructions.findIndex((line) => line.includes('Enter:'))
+  instructions.splice(
+    enter === -1 ? instructions.length : enter,
+    0,
+    `${styleText('dim', 'a:')} all / none`,
+  )
 }
+addToggleAllInstruction()
 
 /**
  * Run `open` with `setup` applied to the group multiselect it constructs.

@@ -2,6 +2,7 @@ import { describe, expect } from 'vitest'
 import { existsSync } from 'node:fs'
 import { writeFile, readFile, mkdir, readdir } from 'node:fs/promises'
 import { join, basename } from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 import {
   runCli,
   runCliWithTty,
@@ -192,6 +193,73 @@ describe('wt cleanup', () => {
     expect(branches).toBe('')
   })
 
+  describe('across every repo', () => {
+    /** A clean worktree in `demo` and another in a second repo, `other`. */
+    async function twoRepos(sandbox: Sandbox): Promise<string[]> {
+      const demo = await newWorktree(sandbox, 'demo work')
+      await runCli(['clone', sandbox.remote, 'other', '--no-alias', '--json'], sandbox)
+      const other = await runCli(['new', 'other', '--title', 'other work', '--json'], sandbox)
+      expect(other.exitCode, other.stdout || other.stderr).toBe(0)
+      return [demo.path, other.json<{ path: string }>().path]
+    }
+
+    it('selects merged worktrees from every repo with --all --merged', async ({ sandbox }) => {
+      const paths = await twoRepos(sandbox)
+
+      const result = await runCli(['cleanup', '--all', '--merged', '--dry-run', '--json'], sandbox)
+
+      expect(result.exitCode, result.stdout || result.stderr).toBe(0)
+      const json = result.json<{ repos: string[]; wouldRemove: { repo: string; path: string }[] }>()
+      expect(json.repos.sort()).toEqual(['demo', 'other'])
+      expect(json.wouldRemove.map(({ repo, path }) => ({ repo, path }))).toEqual(
+        expect.arrayContaining([
+          { repo: 'demo', path: paths[0] },
+          { repo: 'other', path: paths[1] },
+        ]),
+      )
+    })
+
+    it('removes from every repo, tagging each outcome with its repo', async ({ sandbox }) => {
+      const paths = await twoRepos(sandbox)
+
+      const result = await runCli(
+        ['cleanup', '--all', '--merged', '--yes', '--no-trash', '--json'],
+        sandbox,
+      )
+
+      expect(result.exitCode, result.stdout || result.stderr).toBe(0)
+      const json = result.json<{ removed: { repo: string; path: string }[] }>()
+      expect(json.removed.map(({ repo }) => repo).sort()).toEqual(['demo', 'other'])
+      for (const path of paths) expect(existsSync(path)).toBe(false)
+    })
+
+    it('rejects --all with a repo argument', async ({ sandbox }) => {
+      const result = await runCli(['cleanup', 'demo', '--all', '--json'], sandbox)
+
+      expectError(result, 'conflicting_arguments')
+    })
+
+    it('offers All repos first in the repo picker, grouped by repo', async ({ sandbox }) => {
+      const paths = await twoRepos(sandbox)
+
+      const result = await runCliWithTty(['cleanup', '--dry-run'], sandbox, {}, {
+        steps: [
+          { answerWhen: 'All repos (2)', keys: '\r' },
+          { answerWhen: 'Select worktrees to remove', keys: '\r' },
+        ],
+      })
+
+      // The repo picker shows the same counts, so read only the worktree picker.
+      const [, picker] = result.stderr.split('Select worktrees to remove')
+      expect(picker).toContain('demo (1)')
+      expect(picker).toContain('other (1)')
+      const [, wouldRemove] = result.stderr.split('Would remove:')
+      expect(wouldRemove).toBeDefined()
+      expect(wouldRemove).toContain(`demo/${basename(paths[0]!)}`)
+      expect(wouldRemove).toContain(`other/${basename(paths[1]!)}`)
+    })
+  })
+
   describe('interactive picker', () => {
     /** One preselected (clean, merged) worktree and one left unselected (dirty). */
     async function mixedWorktrees(sandbox: Sandbox): Promise<string[]> {
@@ -212,7 +280,10 @@ describe('wt cleanup', () => {
         { answerWhen: 'Select worktrees to remove', keys: 'a\r' },
       )
 
-      expect(result.stderr).toContain('a: all / none')
+      // In clack's key footer, alongside the keys it lists itself.
+      expect(stripVTControlCharacters(result.stderr)).toContain(
+        'Space: select • a: all / none • Enter: confirm',
+      )
       // The prompt itself lists every worktree, so only read past it.
       const [, wouldRemove] = result.stderr.split('Would remove:')
       expect(wouldRemove).toBeDefined()

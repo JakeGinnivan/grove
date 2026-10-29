@@ -270,8 +270,24 @@ describe('wt cleanup', () => {
       return [clean.path, dirtyPath]
     }
 
-    it('selects every worktree with a', async ({ sandbox }) => {
-      const paths = await mixedWorktrees(sandbox)
+    it('lists what a selects in the key footer', async ({ sandbox }) => {
+      await mixedWorktrees(sandbox)
+
+      const result = await runCliWithTty(
+        ['cleanup', 'demo', '--dry-run'],
+        sandbox,
+        {},
+        { answerWhen: 'Select worktrees to remove', keys: '\x03' },
+      )
+
+      // In clack's key footer, alongside the keys it lists itself.
+      expect(stripVTControlCharacters(result.stderr)).toContain(
+        'Space: select • a: merged & clean / none • Enter: confirm',
+      )
+    })
+
+    it('clears the merged worktrees with a, since they start selected', async ({ sandbox }) => {
+      await mixedWorktrees(sandbox)
 
       const result = await runCliWithTty(
         ['cleanup', 'demo', '--dry-run'],
@@ -280,28 +296,28 @@ describe('wt cleanup', () => {
         { answerWhen: 'Select worktrees to remove', keys: 'a\r' },
       )
 
-      // In clack's key footer, alongside the keys it lists itself.
-      expect(stripVTControlCharacters(result.stderr)).toContain(
-        'Space: select • a: all / none • Enter: confirm',
-      )
-      // The prompt itself lists every worktree, so only read past it.
-      const [, wouldRemove] = result.stderr.split('Would remove:')
-      expect(wouldRemove).toBeDefined()
-      for (const path of paths) expect(wouldRemove).toContain(basename(path))
-    })
-
-    it('clears the selection when a is pressed with everything selected', async ({ sandbox }) => {
-      await mixedWorktrees(sandbox)
-
-      const result = await runCliWithTty(
-        ['cleanup', 'demo', '--dry-run'],
-        sandbox,
-        {},
-        { answerWhen: 'Select worktrees to remove', keys: 'aa\r' },
-      )
-
       expect(result.stderr).toContain('Nothing selected.')
     })
+
+    for (const group of ['status', 'none']) {
+      it(`never selects a dirty worktree with a or i (--group ${group})`, async ({ sandbox }) => {
+        const [clean, dirty] = await mixedWorktrees(sandbox)
+
+        // a clears, a selects again, i would invert in clack's flat prompt.
+        const result = await runCliWithTty(
+          ['cleanup', 'demo', '--dry-run', '--group', group],
+          sandbox,
+          {},
+          { answerWhen: 'Select worktrees to remove', keys: 'aai\r' },
+        )
+
+        // The prompt itself lists every worktree, so only read past it.
+        const [, wouldRemove] = result.stderr.split('Would remove:')
+        expect(wouldRemove).toBeDefined()
+        expect(wouldRemove).toContain(basename(clean!))
+        expect(wouldRemove).not.toContain(basename(dirty!))
+      })
+    }
 
     it('shows each repo\'s worktree count when picking a repo', async ({ sandbox }) => {
       await mixedWorktrees(sandbox)

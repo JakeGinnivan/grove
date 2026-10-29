@@ -12,13 +12,22 @@ import { Command, Option } from 'commander'
 import type { ViewOptions } from '../core/worktree-view.js'
 
 /**
+ * What `pickRepo` returns when `includeAll` is set and every repo is picked.
+ * Repo names cannot contain whitespace, so no repo can be called this.
+ */
+export const ALL_REPOS = ' all repos'
+
+/**
  * Resolve the repo argument, prompting when omitted. Errors clearly in
  * non-interactive mode so agents get an actionable message.
  */
 export async function pickRepo(
   reposFile: string,
   provided: string | undefined,
-  { worktreeCounts = false }: { worktreeCounts?: boolean } = {},
+  {
+    worktreeCounts = false,
+    includeAll = false,
+  }: { worktreeCounts?: boolean; includeAll?: boolean } = {},
 ): Promise<string> {
   if (provided) return provided
 
@@ -35,18 +44,20 @@ export async function pickRepo(
   const counts = worktreeCounts
     ? await Promise.all(canonical.map(countWorktrees))
     : canonical.map(() => undefined)
-  return select(
-    'Which repo?',
-    canonical.map((entry, index) => {
-      const count = counts[index]
-      return {
-        value: entry.name,
-        label: count === undefined ? entry.name : `${entry.name} (${count})`,
-        hint: entry.path,
-      }
-    }),
-    'A repo name',
-  )
+  const repos = canonical.map((entry, index) => {
+    const count = counts[index]
+    return {
+      value: entry.name,
+      label: count === undefined ? entry.name : `${entry.name} (${count})`,
+      hint: entry.path,
+    }
+  })
+  const total = counts.reduce<number>((sum, count) => sum + (count ?? 0), 0)
+  const all = {
+    value: ALL_REPOS,
+    label: worktreeCounts ? `All repos (${total})` : 'All repos',
+  }
+  return select('Which repo?', includeAll ? [all, ...repos] : repos, 'A repo name')
 }
 
 /** Worktrees besides the main checkout, or undefined when git can't say. */

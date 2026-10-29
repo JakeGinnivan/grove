@@ -148,6 +148,7 @@ Safety model — read this before automating removal:
 - `--dry-run` reports what would be removed without touching anything. Prefer
   this first when cleaning up several worktrees.
 - `--merged` selects everything already merged into the default branch.
+  Add `--all` instead of a repo to do that across every registered repo.
 - `--delete-branch` also deletes the local branch.
 
 Removed worktrees go to the system trash, or, where that is not writable (as
@@ -161,10 +162,12 @@ every worktree was skipped is still `ok: true`. The result splits the two:
 
 ```json
 { "ok": true, "repo": "my-service",
-  "removed": [{ "path": "...", "branch": "...", "trashed": true, "trashDir": null, "branchDeleted": true }],
-  "skipped": [{ "path": "...", "branch": "...", "reason": "has uncommitted changes; pass --force to remove" }] }
+  "removed": [{ "repo": "my-service", "path": "...", "branch": "...", "trashed": true, "trashDir": null, "branchDeleted": true }],
+  "skipped": [{ "repo": "my-service", "path": "...", "branch": "...", "reason": "has uncommitted changes; pass --force to remove" }] }
 ```
 
+- With `--all`, the top level has `repos` (every repo that had worktrees)
+  instead of `repo`, and each `removed` and `skipped` entry has a `repo`.
 - Before telling the user a worktree is gone, find its path in `removed`.
   Report every `skipped` entry with its reason. Don't filter the JSON down
   to paths before reading it.

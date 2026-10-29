@@ -1,5 +1,26 @@
 # @jakeginnivan/grove
 
+## 0.10.0
+
+### Minor Changes
+
+- fbe7d4a: `grove cleanup` can now clean up every repo at once. The repo picker lists
+  "All repos" first, and `--all` does the same without the prompt (it combines
+  with `--merged`, `--dry-run` and `--yes`). Worktrees are grouped by repo in a
+  single multi-select. JSON results gain a `repo` on each `removed`, `skipped`
+  and `wouldRemove` entry, and `--all` runs report `repos` in place of `repo`.
+
+### Patch Changes
+
+- fa5d72d: In `grove cleanup`'s picker, `a` now toggles only the merged, clean
+  worktrees (the ones selected at the start) instead of every worktree, and
+  the footer says `a: merged & clean / none`. `i` (invert) is turned off there,
+  since it would select exactly the worktrees with work to lose. Other
+  multi-selects keep `a: all / none`.
+- 71e7cdf: The `a: all / none` hint in multi-select prompts such as `grove cleanup` now
+  sits in the key footer next to `Space: select` and `Enter: confirm`, rather
+  than trailing the prompt's message.
+
 ## 0.9.0
 
 ### Minor Changes

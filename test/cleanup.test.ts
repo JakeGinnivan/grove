@@ -2,6 +2,7 @@ import { describe, expect } from 'vitest'
 import { existsSync } from 'node:fs'
 import { writeFile, readFile, mkdir, readdir } from 'node:fs/promises'
 import { join, basename } from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 import {
   runCli,
   runCliWithTty,
@@ -212,7 +213,10 @@ describe('wt cleanup', () => {
         { answerWhen: 'Select worktrees to remove', keys: 'a\r' },
       )
 
-      expect(result.stderr).toContain('a: all / none')
+      // In clack's key footer, alongside the keys it lists itself.
+      expect(stripVTControlCharacters(result.stderr)).toContain(
+        'Space: select • a: all / none • Enter: confirm',
+      )
       // The prompt itself lists every worktree, so only read past it.
       const [, wouldRemove] = result.stderr.split('Would remove:')
       expect(wouldRemove).toBeDefined()

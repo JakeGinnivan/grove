@@ -423,6 +423,17 @@ async function removeOne(
       return outcome
     }
 
+    // Ignored files (node_modules, build output) are regenerable and make the
+    // trash huge and slow to fill. -X rather than -x: a forced removal of a
+    // dirty worktree must keep its untracked work recoverable in the trash.
+    const cleaned = await git(['clean', '-dfX'], {
+      cwd: report.path,
+      allowFailure: true,
+    })
+    if (cleaned.exitCode !== 0) {
+      warn(`Could not remove ignored files from ${report.path} before trashing it.`)
+    }
+
     // Before the move, so this removal's own entry is never the one purged.
     await purgeLocalTrash(dirname(report.path))
     const destination = await moveToTrash(report.path)

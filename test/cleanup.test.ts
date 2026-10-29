@@ -217,6 +217,129 @@ describe('wt cleanup', () => {
     expect(branches).toBe('')
   })
 
+  describe('--delete-remote-branch', () => {
+    /** A merged worktree whose branch is pushed to origin. */
+    async function pushedWorktree(sandbox: Sandbox, title: string) {
+      const worktree = await newWorktree(sandbox, title)
+      await gitIn(['push', '-u', 'origin', worktree.branch], worktree.path)
+      return worktree
+    }
+
+    async function remoteHas(sandbox: Sandbox, branch: string): Promise<boolean> {
+      return (await gitIn(['ls-remote', '--heads', 'origin', branch], sandbox.mainPath)) !== ''
+    }
+
+    it('deletes the branch on the remote', async ({ sandbox }) => {
+      const { path, branch } = await pushedWorktree(sandbox, 'remote gone')
+
+      const result = await runCli(
+        ['cleanup', 'demo', path, '--yes', '--delete-remote-branch', '--no-trash', '--json'],
+        sandbox,
+      )
+
+      expect(result.exitCode, result.stdout || result.stderr).toBe(0)
+      const [removed] = result.json<{
+        removed: { remoteBranchDeleted: string | null; remoteBranchError: string | null }[]
+      }>().removed
+      expect(removed).toMatchObject({
+        remoteBranchDeleted: `origin/${branch}`,
+        remoteBranchError: null,
+      })
+      expect(await remoteHas(sandbox, branch)).toBe(false)
+      // The local branch stays unless --delete-branch asks for it too.
+      expect(await gitIn(['branch', '--list', branch], sandbox.mainPath)).not.toBe('')
+    })
+
+    it('leaves the remote alone without the flag', async ({ sandbox }) => {
+      const { path, branch } = await pushedWorktree(sandbox, 'remote kept')
+
+      await runCli(['cleanup', 'demo', path, '--yes', '--no-trash', '--json'], sandbox)
+
+      expect(await remoteHas(sandbox, branch)).toBe(true)
+    })
+
+    it('is not an error when the remote branch is already gone', async ({ sandbox }) => {
+      const { path, branch } = await pushedWorktree(sandbox, 'deleted on merge')
+      // Deleted on the remote but not yet pruned locally.
+      await gitIn(['push', sandbox.remote, '--delete', branch], sandbox.mainPath)
+
+      const result = await runCli(
+        ['cleanup', 'demo', path, '--yes', '--delete-remote-branch', '--no-trash', '--json'],
+        sandbox,
+      )
+
+      expect(result.exitCode, result.stdout || result.stderr).toBe(0)
+      const [removed] = result.json<{
+        removed: { remoteBranchDeleted: string | null; remoteBranchError: string | null }[]
+      }>().removed
+      expect(removed).toMatchObject({ remoteBranchDeleted: null, remoteBranchError: null })
+      expect(existsSync(path)).toBe(false)
+    })
+
+    it('skips an unmerged worktree under --yes rather than delete its remote branch', async ({ sandbox }) => {
+      const { path, branch } = await newWorktree(sandbox, 'open pr')
+      await writeFile(join(path, 'feature.txt'), 'feature\n')
+      await gitIn(['add', '.'], path)
+      await gitIn(['commit', '-m', 'feature'], path)
+      await gitIn(['push', '-u', 'origin', branch], path)
+
+      const result = await runCli(
+        ['cleanup', 'demo', path, '--yes', '--delete-remote-branch', '--no-trash', '--json'],
+        sandbox,
+      )
+
+      const data = result.json<{ removed: unknown[]; skipped: { reason: string }[] }>()
+      expect(data.removed).toEqual([])
+      expect(data.skipped[0]?.reason).toMatch(/unmerged remote branch/)
+      expect(existsSync(path)).toBe(true)
+      expect(await remoteHas(sandbox, branch)).toBe(true)
+    })
+
+    it('skips when the remote branch has commits the local branch lacks', async ({ sandbox }) => {
+      const { path, branch } = await pushedWorktree(sandbox, 'pushed elsewhere')
+      // Someone else pushes to the branch; a fetch brings the commit in.
+      const other = join(sandbox.root, 'other-clone')
+      await gitIn(['clone', '--branch', branch, sandbox.remote, other], sandbox.root)
+      await writeFile(join(other, 'theirs.txt'), 'theirs\n')
+      await gitIn(['add', '.'], other)
+      await gitIn(['commit', '-m', 'theirs'], other)
+      await gitIn(['push', 'origin', branch], other)
+      await gitIn(['fetch', 'origin'], path)
+
+      const result = await runCli(
+        ['cleanup', 'demo', path, '--yes', '--delete-remote-branch', '--no-trash', '--json'],
+        sandbox,
+      )
+
+      const data = result.json<{ skipped: { reason: string }[] }>()
+      expect(data.skipped[0]?.reason).toMatch(/1 commit\(s\) on origin\/.* not in the local branch/)
+      expect(await remoteHas(sandbox, branch)).toBe(true)
+    })
+
+    it('refuses to delete a remote branch that moved since the last fetch', async ({ sandbox }) => {
+      const { path, branch } = await pushedWorktree(sandbox, 'moved unseen')
+      const other = join(sandbox.root, 'other-clone')
+      await gitIn(['clone', '--branch', branch, sandbox.remote, other], sandbox.root)
+      await writeFile(join(other, 'theirs.txt'), 'theirs\n')
+      await gitIn(['add', '.'], other)
+      await gitIn(['commit', '-m', 'theirs'], other)
+      await gitIn(['push', 'origin', branch], other)
+
+      const result = await runCli(
+        ['cleanup', 'demo', path, '--yes', '--delete-remote-branch', '--no-trash', '--json'],
+        sandbox,
+      )
+
+      expect(result.exitCode, result.stdout || result.stderr).toBe(0)
+      const [removed] = result.json<{
+        removed: { remoteBranchDeleted: string | null; remoteBranchError: string | null }[]
+      }>().removed
+      expect(removed?.remoteBranchDeleted).toBeNull()
+      expect(removed?.remoteBranchError).toMatch(/stale info/)
+      expect(await remoteHas(sandbox, branch)).toBe(true)
+    })
+  })
+
   describe('across every repo', () => {
     /** A clean worktree in `demo` and another in a second repo, `other`. */
     async function twoRepos(sandbox: Sandbox): Promise<string[]> {

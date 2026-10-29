@@ -4,7 +4,13 @@ import { resolve, basename, dirname } from 'node:path'
 import { samePath } from '../core/paths.js'
 import { loadConfig, type GroveConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor, readRegistry } from '../core/registry.js'
-import { git, listWorktrees, localBranchExists, removeConfigSection } from '../core/git.js'
+import {
+  git,
+  listWorktrees,
+  localBranchExists,
+  removeConfigSection,
+  splitUpstream,
+} from '../core/git.js'
 import { moveToTrash, purgeLocalTrash } from '../core/trash.js'
 import { groupMultiselect, multiselect, confirm, type ToggleAll } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
@@ -35,6 +41,7 @@ export function cleanupCommand(): Command {
     .option('--force', 'remove even when dirty or unmerged')
     .option('-y, --yes', 'skip confirmation prompts')
     .option('--delete-branch', 'also delete the local branch')
+    .option('--delete-remote-branch', 'also delete the branch on its remote, if it is still there')
     .option('--no-trash', 'delete permanently instead of moving to trash')
     .option('--dry-run', 'show what would be removed without removing it'),
     { sort: 'recent', group: 'status' },
@@ -53,6 +60,7 @@ export interface CleanupOptions extends ViewOptions {
   force?: boolean
   yes?: boolean
   deleteBranch?: boolean
+  deleteRemoteBranch?: boolean
   trash: boolean
   dryRun?: boolean
 }
@@ -67,6 +75,10 @@ interface RemovalOutcome {
   /** The local trash folder it went to, or null for the system trash. */
   trashDir: string | null
   branchDeleted: boolean
+  /** The remote branch, e.g. `origin/x`, when `--delete-remote-branch` deleted it. */
+  remoteBranchDeleted: string | null
+  /** Why `--delete-remote-branch` could not delete it, if it tried and failed. */
+  remoteBranchError: string | null
   skipped: string | null
 }
 
@@ -79,14 +91,27 @@ function partitionOutcomes(outcomes: RemovalOutcome[]) {
   return {
     removed: outcomes
       .filter((outcome) => outcome.removed)
-      .map(({ repo, path, branch, trashed, trashDir, branchDeleted }) => ({
-        ...(repo ? { repo } : {}),
-        path,
-        branch,
-        trashed,
-        trashDir,
-        branchDeleted,
-      })),
+      .map(
+        ({
+          repo,
+          path,
+          branch,
+          trashed,
+          trashDir,
+          branchDeleted,
+          remoteBranchDeleted,
+          remoteBranchError,
+        }) => ({
+          ...(repo ? { repo } : {}),
+          path,
+          branch,
+          trashed,
+          trashDir,
+          branchDeleted,
+          remoteBranchDeleted,
+          remoteBranchError,
+        }),
+      ),
     skipped: outcomes
       .filter((outcome) => !outcome.removed)
       .map(({ repo, path, branch, skipped }) => ({
@@ -309,6 +334,7 @@ async function removeTargets(
           repo,
           path: report.path,
           branch: report.branch,
+          upstream: report.upstream,
           dirty: report.dirty,
           merged: report.merged,
         })),
@@ -318,7 +344,9 @@ async function removeTargets(
     log()
     log(pc.bold('Would remove:'))
     for (const { repo, report } of targets) {
-      log(`  ${name(repo, report.path)}  ${pc.dim(describeStatus(report))}`)
+      const remoteNote =
+        options.deleteRemoteBranch && report.upstream ? `, delete ${report.upstream}` : ''
+      log(`  ${name(repo, report.path)}  ${pc.dim(describeStatus(report) + remoteNote)}`)
     }
     log()
     return
@@ -341,6 +369,7 @@ async function removeTargets(
     const outcome = await removeOne(gitDir, report, {
       force: options.force ?? false,
       deleteBranch: options.deleteBranch ?? false,
+      deleteRemoteBranch: options.deleteRemoteBranch ?? false,
       useTrash,
     })
     outcomes.push({ ...outcome, repo })
@@ -361,7 +390,8 @@ async function removeTargets(
       const branchNote = outcome.branchDeleted
         ? pc.dim(`, deleted branch ${outcome.branch}`)
         : ''
-      success(`Removed ${label}${suffix}${branchNote}`)
+      success(`Removed ${label}${suffix}${branchNote}${remoteNote(outcome)}`)
+      if (outcome.remoteBranchError) warn(outcome.remoteBranchError)
     }
   }
   log()
@@ -373,6 +403,7 @@ async function removeOne(
   options: {
     force: boolean
     deleteBranch: boolean
+    deleteRemoteBranch: boolean
     useTrash: boolean
   },
 ): Promise<RemovalOutcome> {
@@ -383,6 +414,8 @@ async function removeOne(
     trashed: false,
     trashDir: null,
     branchDeleted: false,
+    remoteBranchDeleted: null,
+    remoteBranchError: null,
     skipped: null,
   }
 
@@ -393,6 +426,10 @@ async function removeOne(
   if (report.dirty) risks.push('uncommitted changes')
   if (report.ahead > 0) risks.push(`${report.ahead} unpushed commit(s)`)
   if (!report.merged && !report.upstream) risks.push('not merged, no upstream')
+  // The remote copy is what made an unmerged branch safe to drop, and on most
+  // hosts deleting a PR's branch closes the PR.
+  const remote = options.deleteRemoteBranch ? await remoteRisks(gitDir, report) : []
+  risks.push(...remote)
 
   if (risks.length > 0 && !options.force) {
     const proceed = await confirm(
@@ -448,7 +485,7 @@ async function removeOne(
       if (pruned.exitCode !== 0) {
         warn(`Moved ${report.path} to trash, but pruning the worktree failed.`)
       }
-      await deleteBranchIfRequested(gitDir, report, options, outcome)
+      await deleteBranches(gitDir, report, options, outcome)
       return outcome
     }
     outcome.skipped =
@@ -467,8 +504,77 @@ async function removeOne(
   }
   outcome.removed = true
 
-  await deleteBranchIfRequested(gitDir, report, options, outcome)
+  await deleteBranches(gitDir, report, options, outcome)
   return outcome
+}
+
+/** What deleting the worktree's remote branch would lose. */
+async function remoteRisks(gitDir: string, report: WorktreeReport): Promise<string[]> {
+  if (!report.branch || !report.upstream) return []
+  const risks: string[] = []
+  if (!report.merged) risks.push(`an unmerged remote branch ${report.upstream}`)
+  const behind = await git(
+    ['rev-list', '--count', `refs/heads/${report.branch}..refs/remotes/${report.upstream}`],
+    { cwd: gitDir, allowFailure: true },
+  )
+  const count = Number.parseInt(behind.stdout, 10)
+  if (behind.exitCode === 0 && count > 0) {
+    risks.push(`${count} commit(s) on ${report.upstream} not in the local branch`)
+  }
+  return risks
+}
+
+async function deleteBranches(
+  gitDir: string,
+  report: WorktreeReport,
+  options: { deleteBranch: boolean; deleteRemoteBranch: boolean },
+  outcome: RemovalOutcome,
+): Promise<void> {
+  if (options.deleteRemoteBranch) await deleteRemoteBranch(gitDir, report, outcome)
+  await deleteBranchIfRequested(gitDir, report, options, outcome)
+}
+
+/**
+ * Delete the upstream branch on its remote. A branch already deleted there,
+ * say on merge, is not an error. The lease refuses the delete when the
+ * remote has moved since the last fetch, so commits we never saw survive.
+ */
+async function deleteRemoteBranch(
+  gitDir: string,
+  report: WorktreeReport,
+  outcome: RemovalOutcome,
+): Promise<void> {
+  if (!report.upstream) return
+  const target = await splitUpstream(gitDir, report.upstream)
+  if (!target) {
+    outcome.remoteBranchError = `Could not tell which remote ${report.upstream} is on; left it in place.`
+    return
+  }
+  const trackingRef = `refs/remotes/${report.upstream}`
+  const expected = await git(['rev-parse', '--verify', '--quiet', trackingRef], {
+    cwd: gitDir,
+    allowFailure: true,
+  })
+  const lease = expected.stdout
+    ? `--force-with-lease=refs/heads/${target.branch}:${expected.stdout}`
+    : '--force-with-lease'
+  const pushed = await git(['push', lease, '--delete', target.remote, target.branch], {
+    cwd: gitDir,
+    allowFailure: true,
+  })
+  if (pushed.exitCode === 0) {
+    outcome.remoteBranchDeleted = report.upstream
+    return
+  }
+  if (/remote ref does not exist/.test(pushed.stderr)) {
+    await git(['update-ref', '-d', trackingRef], { cwd: gitDir, allowFailure: true })
+    return
+  }
+  // git's last line is a generic "failed to push"; the rejection says why.
+  const lines = pushed.stderr.split('\n').map((line) => line.trim()).filter(Boolean)
+  const reason =
+    lines.find((line) => /^(!|fatal:)/.test(line)) ?? lines.at(-1) ?? 'git push failed'
+  outcome.remoteBranchError = `Could not delete ${report.upstream}: ${reason}`
 }
 
 async function deleteBranchIfRequested(
@@ -487,6 +593,12 @@ async function deleteBranchIfRequested(
   if (outcome.branchDeleted) {
     await removeConfigSection(gitDir, `branch.${report.branch}`)
   }
+}
+
+function remoteNote(outcome: RemovalOutcome): string {
+  return outcome.remoteBranchDeleted
+    ? pc.dim(`, deleted remote branch ${outcome.remoteBranchDeleted}`)
+    : ''
 }
 
 function trashNote(outcome: RemovalOutcome): string {
@@ -562,6 +674,7 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
   const outcome = await removeOne(gitRoot, report, {
     force: options.force ?? false,
     deleteBranch: options.deleteBranch ?? false,
+    deleteRemoteBranch: options.deleteRemoteBranch ?? false,
     useTrash,
   })
 
@@ -574,7 +687,8 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
     warn(`Skipped: ${outcome.skipped}`)
     return
   }
-  success(`Removed ${report.dir}${trashNote(outcome)}`)
+  success(`Removed ${report.dir}${trashNote(outcome)}${remoteNote(outcome)}`)
+  if (outcome.remoteBranchError) warn(outcome.remoteBranchError)
   // The shell is now inside a deleted directory; move it somewhere valid.
   info(`Returning to ${gitRoot}`)
   emitCd(gitRoot)

@@ -217,6 +217,25 @@ export async function remoteBranchExists(
   return refExists(gitDir, `refs/remotes/${remote}/${branch}`)
 }
 
+/**
+ * Split an upstream like `origin/feature/x` into its remote and branch. The
+ * remote is matched against the configured remotes, longest first, because
+ * both remote and branch names may contain slashes.
+ */
+export async function splitUpstream(
+  gitDir: string,
+  upstream: string,
+): Promise<{ remote: string; branch: string } | undefined> {
+  const { stdout } = await git(['remote'], { cwd: gitDir, allowFailure: true })
+  const remote = stdout
+    .split('\n')
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .find((name) => upstream.startsWith(`${name}/`))
+  if (!remote) return undefined
+  return { remote, branch: upstream.slice(remote.length + 1) }
+}
+
 export async function currentBranch(dir: string): Promise<string | undefined> {
   const { stdout } = await git(['rev-parse', '--abbrev-ref', 'HEAD'], {
     cwd: dir,

@@ -150,6 +150,10 @@ Safety model — read this before automating removal:
 - `--merged` selects everything already merged into the default branch.
   Add `--all` instead of a repo to do that across every registered repo.
 - `--delete-branch` also deletes the local branch.
+- `--delete-remote-branch` also deletes the branch on its remote, if it is
+  still there. An unmerged branch counts as work at risk here, because
+  deleting it closes any open PR: it is skipped under `--yes` like a dirty
+  worktree. So is one whose remote has commits the local branch lacks.
 
 Removed worktrees go to the system trash, or, where that is not writable (as
 in a sandbox), to `.grove-trash/` beside the worktrees for 14 days. The JSON

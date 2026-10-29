@@ -6,7 +6,7 @@ import { loadConfig, type GroveConfig } from '../core/config.js'
 import { resolveRepo, gitDirFor, readRegistry } from '../core/registry.js'
 import { git, listWorktrees, localBranchExists, removeConfigSection } from '../core/git.js'
 import { moveToTrash, purgeLocalTrash } from '../core/trash.js'
-import { groupMultiselect, multiselect, confirm } from '../core/prompts.js'
+import { groupMultiselect, multiselect, confirm, type ToggleAll } from '../core/prompts.js'
 import { emitJson, emitCd, log, success, warn, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
 import { ALL_REPOS, pickRepo, withViewOptions } from './shared.js'
@@ -156,6 +156,7 @@ export async function runCleanup(
             ungrouped.reports.map(option),
             'Worktree names',
             preselected,
+            safeToggle(preselected),
           )
         : await groupMultiselect(
             'Select worktrees to remove',
@@ -167,6 +168,7 @@ export async function runCleanup(
             ),
             'Worktree names',
             preselected,
+            safeToggle(preselected),
           )
     selected = candidates.filter((report) => chosen.includes(report.path))
   }
@@ -177,6 +179,14 @@ export async function runCleanup(
     config.useTrash,
     options,
   )
+}
+
+/**
+ * `a` in the picker selects only what is safe to remove, the same set the
+ * picker starts with. Worktrees with work to lose are picked one at a time.
+ */
+function safeToggle(paths: string[]): ToggleAll {
+  return { label: 'merged & clean', values: paths }
 }
 
 /** A worktree picked for removal, and the repo it belongs to. */
@@ -245,6 +255,9 @@ async function runCleanupAll(config: GroveConfig, options: CleanupOptions): Prom
       return
     }
   } else {
+    const safe = candidates
+      .filter((target) => isSafeToRemove(target.report))
+      .map((target) => target.report.path)
     const widths = rowWidths(
       candidates.map((target) => target.report),
       { status: true },
@@ -261,9 +274,8 @@ async function runCleanupAll(config: GroveConfig, options: CleanupOptions): Prom
         ]),
       ),
       'Worktree names',
-      candidates
-        .filter((target) => isSafeToRemove(target.report))
-        .map((target) => target.report.path),
+      safe,
+      safeToggle(safe),
     )
     selected = candidates.filter((target) => chosen.includes(target.report.path))
   }

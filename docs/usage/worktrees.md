@@ -118,9 +118,13 @@ wt cleanup --all --merged --yes          # everything merged, in every repo
 
 Without a repo, `cleanup` (and `list`) asks which one, showing how many
 worktrees each has. `cleanup` lists "All repos" first, the same as `--all`:
-one multi-select with every repo's worktrees, grouped by repo. In the
-multi-select, `a` selects every worktree, or none when they are all selected
-already.
+one multi-select with every repo's worktrees, grouped by repo.
+
+The multi-select starts with every merged, clean worktree selected. `a`
+selects those same worktrees again, or clears them when they are all
+selected, and leaves anything you picked by hand alone. A worktree with
+uncommitted or unpushed work is only ever selected one at a time, with Space
+or its group heading.
 
 Worktrees with uncommitted changes or unpushed commits are **skipped** unless
 you pass `--force`, and `--yes` alone will not override that. `--dry-run`

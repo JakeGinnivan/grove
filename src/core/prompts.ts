@@ -1,5 +1,5 @@
 import * as clack from '@clack/prompts'
-import { GroupMultiSelectPrompt } from '@clack/core'
+import { GroupMultiSelectPrompt, MultiSelectPrompt } from '@clack/core'
 import { styleText } from 'node:util'
 import { CancelledError, NeedsInputError } from './errors.js'
 import { getOutputContext } from './output.js'
@@ -203,38 +203,68 @@ export async function searchSelect(
   )
 }
 
+/**
+ * What `a` toggles in a multiselect. By default it is every option; narrowing
+ * it keeps `a` from bulk-selecting options that are risky to pick, such as
+ * worktrees with unsaved work.
+ */
+export interface ToggleAll {
+  /** Shown in the key footer as `a: <label> / none`. */
+  label: string
+  values: string[]
+}
+
 export async function multiselect(
   message: string,
   options: SelectOption[],
   what = 'A selection',
   initialValues?: string[],
+  toggle?: ToggleAll,
 ): Promise<string[]> {
   if (options.length === 0) return []
   if (!canPrompt()) {
     throw new NeedsInputError(what, 'the values as arguments')
   }
-  return guard(
-    await clack.multiselect({
+  const values = toggle?.values ?? options.map((option) => option.value)
+  const setup = (prompt: MultiSelectPrompt<{ value: string }>) => {
+    // clack's key handler calls these methods, so replacing them on the
+    // instance is the only way to change what `a` (and `i`) do. They are
+    // private in clack's types, hence Object.assign.
+    Object.assign(prompt, {
+      toggleAll: () => {
+        prompt.value = toggled(prompt.value, values)
+      },
+      // Inverting a narrowed selection picks exactly what `a` leaves out.
+      ...(toggle ? { toggleInvert: () => {} } : {}),
+    })
+  }
+  const open = () =>
+    clack.multiselect({
       ...PROMPT_STREAM,
       message,
       options,
       required: false,
       ...(initialValues ? { initialValues } : {}),
-    }),
+    })
+  return guard(
+    await withToggleInstruction(toggle?.label ?? 'all', () =>
+      withNextPrompt(MultiSelectPrompt<{ value: string }>, setup, open),
+    ),
   )
 }
 
 /**
  * A multiselect split under group headings. Keys of `groups` are the
  * headings; toggling a heading toggles every option under it, and `a`
- * toggles every option. Empty groups are dropped so no heading appears with
- * nothing beneath it.
+ * toggles every option, or just `toggle.values`. Empty groups are dropped so
+ * no heading appears with nothing beneath it.
  */
 export async function groupMultiselect(
   message: string,
   groups: Record<string, SelectOption[]>,
   what = 'A selection',
   initialValues?: string[],
+  toggle?: ToggleAll,
 ): Promise<string[]> {
   const nonEmpty = Object.fromEntries(
     Object.entries(groups).filter(([, options]) => options.length > 0),
@@ -243,48 +273,71 @@ export async function groupMultiselect(
   if (!canPrompt()) {
     throw new NeedsInputError(what, 'the values as arguments')
   }
-  const pending = withNextGroupPrompt(bindToggleAll, () =>
+  const values =
+    toggle?.values ?? Object.values(nonEmpty).flatMap((options) => options.map((o) => o.value))
+  // clack binds no `a` here, unlike the flat multiselect.
+  const setup = (prompt: GroupMultiSelectPrompt<{ value: string }>) =>
+    prompt.on('key', (_char, key) => {
+      if (key?.name === 'a') prompt.value = toggled(prompt.value, values)
+    })
+  const open = () =>
     clack.groupMultiselect({
       ...PROMPT_STREAM,
       message,
       options: nonEmpty,
       required: false,
       ...(initialValues ? { initialValues } : {}),
-    }),
+    })
+  return guard(
+    await withToggleInstruction(toggle?.label ?? 'all', () =>
+      withNextPrompt(GroupMultiSelectPrompt<{ value: string }>, setup, open),
+    ),
   )
-  return guard(await pending)
 }
 
 /**
- * clack's flat multiselect binds `a` to select all / none, and we bind it on
- * the grouped one, but clack's key footer never lists it. Both prompts render
- * this shared, exported array, so add the key to it, before `Enter`. Styled
- * with `styleText` at load time, as clack builds its own entries.
+ * Select every one of `values`, or deselect them when all already are.
+ * Anything else selected by hand stays as it is.
  */
-function addToggleAllInstruction(): void {
-  const instructions = clack.MULTISELECT_INSTRUCTIONS
-  const enter = instructions.findIndex((line) => line.includes('Enter:'))
-  instructions.splice(
-    enter === -1 ? instructions.length : enter,
-    0,
-    `${styleText('dim', 'a:')} all / none`,
-  )
+function toggled(selected: string[] | undefined, values: string[]): string[] {
+  const current = selected ?? []
+  return values.every((value) => current.includes(value))
+    ? current.filter((value) => !values.includes(value))
+    : [...new Set([...current, ...values])]
 }
-addToggleAllInstruction()
 
 /**
- * Run `open` with `setup` applied to the group multiselect it constructs.
- * clack's `groupMultiselect` builds the prompt and calls `prompt()` on it in
- * one synchronous step and never hands the instance back, so the only way to
+ * clack's key footer never lists `a`. Both multiselects render this shared,
+ * exported array on every frame, the first while `open` is still running, so
+ * add the key before `Enter` first and take it out once the prompt settles.
+ */
+async function withToggleInstruction<T>(label: string, open: () => Promise<T>): Promise<T> {
+  const instructions = clack.MULTISELECT_INSTRUCTIONS
+  const hint = `${styleText('dim', 'a:')} ${label} / none`
+  const enter = instructions.findIndex((line) => line.includes('Enter:'))
+  instructions.splice(enter === -1 ? instructions.length : enter, 0, hint)
+  try {
+    return await open()
+  } finally {
+    const at = instructions.indexOf(hint)
+    if (at !== -1) instructions.splice(at, 1)
+  }
+}
+
+/**
+ * Run `open` with `setup` applied to the next prompt of `Prompt`'s class.
+ * clack's prompt functions build the prompt and call `prompt()` on it in one
+ * synchronous step and never hand the instance back, so the only way to
  * reach it is to intercept that call.
  */
-function withNextGroupPrompt<T>(
-  setup: (prompt: GroupMultiSelectPrompt<{ value: string }>) => void,
+function withNextPrompt<P extends { prompt(): unknown }, T>(
+  Prompt: { prototype: P },
+  setup: (prompt: P) => void,
   open: () => T,
 ): T {
-  const proto = GroupMultiSelectPrompt.prototype
+  const proto = Prompt.prototype
   const original = proto.prompt
-  proto.prompt = function (this: GroupMultiSelectPrompt<{ value: string }>) {
+  proto.prompt = function (this: P) {
     proto.prompt = original
     setup(this)
     return original.call(this)
@@ -294,22 +347,6 @@ function withNextGroupPrompt<T>(
   } finally {
     proto.prompt = original
   }
-}
-
-/**
- * Give the group multiselect the `a` key its flat sibling has: select every
- * option, or clear them all when every one is already selected.
- */
-function bindToggleAll(prompt: GroupMultiSelectPrompt<{ value: string }>): void {
-  prompt.on('key', (_char, key) => {
-    if (key?.name !== 'a') return
-    const values = prompt.options
-      .filter((option) => option.group !== true)
-      .map((option) => option.value)
-    const selected = prompt.value ?? []
-    const all = values.every((value) => selected.includes(value))
-    prompt.value = all ? [] : values
-  })
 }
 
 export const spinner =(options: Parameters<typeof clack.spinner>[0] = {}) =>

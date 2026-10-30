@@ -1,5 +1,19 @@
 # @jakeginnivan/grove
 
+## 0.11.0
+
+### Minor Changes
+
+- 5fd511b: `grove cleanup --delete-remote-branch` also deletes each removed worktree's branch on its remote, when the remote still has it. Without the flag, the interactive picker asks whether to. A branch that is not merged, or whose remote has commits the local branch lacks, is treated as work at risk and skipped under `--yes` unless you pass `--force`.
+- ba82952: Squash- and rebase-merged branches now count as merged in `grove list`, `grove pick` and `grove cleanup`, so `cleanup --merged` and the picker's preselection include them. They show as `✔ squash-merged`, and `--json` reports `squashMerged: true` alongside `merged`. A squash whose conflicts were resolved differently from the branch is not recognised.
+
+### Patch Changes
+
+- c5c39cb: `cleanup` runs `git clean -dfX` on a worktree before moving it to the trash, so
+  ignored files like `node_modules` and build output are deleted rather than
+  filling the trash. Untracked files that aren't ignored are kept, so a forced
+  removal of a dirty worktree can still be recovered from the trash.
+
 ## 0.10.0
 
 ### Minor Changes

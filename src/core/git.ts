@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { normalize, join, dirname } from 'node:path'
 import { mkdir } from 'node:fs/promises'
@@ -311,6 +311,80 @@ export async function isMergedInto(
     allowFailure: true,
   })
   return exitCode === 0
+}
+
+/**
+ * True when `ref`'s changes landed in `base` as new commits rather than as
+ * `ref` itself: a squash merge (one commit on `base` with the same diff as
+ * the whole branch) or a rebase merge (every branch commit has an equivalent
+ * on `base`). Equivalence is git's patch-id, so a squash whose conflicts were
+ * resolved differently from the branch is not recognised.
+ */
+export async function isSquashOrRebaseMergedInto(
+  gitDir: string,
+  ref: string,
+  base: string,
+): Promise<boolean> {
+  const mergeBase = await git(['merge-base', base, ref], { cwd: gitDir, allowFailure: true })
+  if (mergeBase.exitCode !== 0 || !mergeBase.stdout) return false
+
+  const cherry = await git(['cherry', base, ref], { cwd: gitDir, allowFailure: true })
+  if (cherry.exitCode !== 0) return false
+  const commits = cherry.stdout.split('\n').filter(Boolean)
+  if (commits.length === 0) return false
+  if (commits.every((line) => line.startsWith('-'))) return true
+
+  const files = await git(['diff', '--name-only', '--no-renames', mergeBase.stdout, ref], {
+    cwd: gitDir,
+    allowFailure: true,
+  })
+  if (files.exitCode !== 0 || !files.stdout) return false
+  const [branchId] = await patchIds(gitDir, ['diff', mergeBase.stdout, ref])
+  if (!branchId) return false
+  // Limiting the log to the branch's files keeps a squash commit's patch
+  // whole while sparing the read of every unrelated change on base.
+  const paths = files.stdout.split('\n')
+  const pathspec = paths.length <= 200 ? ['--', ...paths] : []
+  const landed = await patchIds(gitDir, [
+    'log',
+    '-p',
+    '--no-merges',
+    '--format=commit %H',
+    `${ref}..${base}`,
+    ...pathspec,
+  ])
+  return landed.includes(branchId)
+}
+
+/**
+ * Patch ids of what `git <args>` prints, streamed through `git patch-id`
+ * because a long `log -p` can be far bigger than is worth buffering.
+ */
+async function patchIds(
+  gitDir: string,
+  [command, ...rest]: [string, ...string[]],
+): Promise<string[]> {
+  return new Promise((resolve) => {
+    // Flags before `rest`, which may end in a `--` pathspec.
+    const args = ['-C', gitDir, command, '--no-ext-diff', '--no-color', ...rest]
+    const source = spawn('git', args, { stdio: ['ignore', 'pipe', 'ignore'] })
+    const ids = spawn('git', ['-C', gitDir, 'patch-id', '--stable'], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+    })
+    source.stdout.pipe(ids.stdin)
+    let out = ''
+    ids.stdout.on('data', (chunk: Buffer) => {
+      out += chunk.toString()
+    })
+    const fail = () => resolve([])
+    source.on('error', fail)
+    ids.on('error', fail)
+    ids.stdin.on('error', () => {})
+    ids.on('close', (code) => {
+      if (code !== 0) return fail()
+      resolve(out.split('\n').flatMap((line) => line.split(' ')[0] || []))
+    })
+  })
 }
 
 /**

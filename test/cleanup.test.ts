@@ -217,6 +217,71 @@ describe('wt cleanup', () => {
     expect(branches).toBe('')
   })
 
+  describe('squash and rebase merges', () => {
+    /** A worktree with two commits of its own, pushed to origin. */
+    async function featureWorktree(sandbox: Sandbox, title: string) {
+      const worktree = await newWorktree(sandbox, title)
+      for (const name of ['one', 'two']) {
+        await writeFile(join(worktree.path, `${name}.txt`), `${name}\n`)
+        await gitIn(['add', '.'], worktree.path)
+        await gitIn(['commit', '-m', name], worktree.path)
+      }
+      await gitIn(['push', '-u', 'origin', worktree.branch], worktree.path)
+      return worktree
+    }
+
+    /** Land commits on origin's default branch, as a merge on GitHub would. */
+    async function landOnMain(sandbox: Sandbox, land: string[][]) {
+      for (const args of land) await gitIn(args, sandbox.mainPath)
+      await gitIn(['push', 'origin', 'HEAD'], sandbox.mainPath)
+      await gitIn(['fetch', 'origin'], sandbox.mainPath)
+    }
+
+    async function listed(sandbox: Sandbox, path: string) {
+      const result = await runCli(['list', 'demo', '--json'], sandbox)
+      expect(result.exitCode, result.stdout || result.stderr).toBe(0)
+      return result
+        .json<{ worktrees: { path: string; merged: boolean; squashMerged: boolean }[] }>()
+        .worktrees.find((wt) => wt.path === path)
+    }
+
+    it('counts a squash-merged branch as merged', async ({ sandbox }) => {
+      const { path, branch } = await featureWorktree(sandbox, 'squashed')
+      // An unrelated commit first, so the squash is not simply the tip.
+      await writeFile(join(sandbox.mainPath, 'other.txt'), 'other\n')
+      await landOnMain(sandbox, [
+        ['add', '.'],
+        ['commit', '-m', 'other'],
+        ['merge', '--squash', branch],
+        ['commit', '-m', 'squashed'],
+      ])
+
+      expect(await listed(sandbox, path)).toMatchObject({ merged: true, squashMerged: true })
+      const result = await runCli(['cleanup', 'demo', '--merged', '--dry-run', '--json'], sandbox)
+      const wouldRemove = result.json<{ wouldRemove: { path: string }[] }>().wouldRemove
+      expect(wouldRemove.map((wt) => wt.path)).toContain(path)
+    })
+
+    it('counts a rebase-merged branch as merged', async ({ sandbox }) => {
+      const { path, branch } = await featureWorktree(sandbox, 'rebased')
+      await writeFile(join(sandbox.mainPath, 'other.txt'), 'other\n')
+      await landOnMain(sandbox, [
+        ['add', '.'],
+        ['commit', '-m', 'other'],
+        ['cherry-pick', `origin/main..${branch}`],
+      ])
+
+      expect(await listed(sandbox, path)).toMatchObject({ merged: true, squashMerged: true })
+    })
+
+    it('does not count a branch with only some of its commits landed', async ({ sandbox }) => {
+      const { path, branch } = await featureWorktree(sandbox, 'half landed')
+      await landOnMain(sandbox, [['cherry-pick', `${branch}~1`]])
+
+      expect(await listed(sandbox, path)).toMatchObject({ merged: false, squashMerged: false })
+    })
+  })
+
   describe('--delete-remote-branch', () => {
     /** A merged worktree whose branch is pushed to origin. */
     async function pushedWorktree(sandbox: Sandbox, title: string) {
@@ -465,6 +530,25 @@ describe('wt cleanup', () => {
         expect(wouldRemove).not.toContain(basename(dirty!))
       })
     }
+
+    it('offers to delete the remote branches of the picked worktrees', async ({ sandbox }) => {
+      const { path, branch } = await newWorktree(sandbox, 'picked and pushed')
+      await gitIn(['push', '-u', 'origin', branch], path)
+
+      const result = await runCliWithTty(['cleanup', 'demo', '--no-trash'], sandbox, {}, {
+        steps: [
+          { answerWhen: 'Select worktrees to remove' },
+          { answerWhen: 'Also delete the remote branch of 1 pushed worktree(s)?', keys: 'y' },
+          { answerWhen: 'Remove 1 worktree(s)?', keys: 'y' },
+        ],
+      })
+
+      expect(result.exitCode, result.stderr).toBe(0)
+      expect(stripVTControlCharacters(result.stderr)).toContain(
+        `deleted remote branch origin/${branch}`,
+      )
+      expect(await gitIn(['ls-remote', '--heads', 'origin', branch], sandbox.mainPath)).toBe('')
+    })
 
     it('shows each repo\'s worktree count when picking a repo', async ({ sandbox }) => {
       await mixedWorktrees(sandbox)

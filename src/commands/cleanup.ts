@@ -196,6 +196,7 @@ export async function runCleanup(
             safeToggle(preselected),
           )
     selected = candidates.filter((report) => chosen.includes(report.path))
+    options = await askDeleteRemoteBranch(selected, options)
   }
 
   await removeTargets(
@@ -212,6 +213,24 @@ export async function runCleanup(
  */
 function safeToggle(paths: string[]): ToggleAll {
   return { label: 'merged & clean', values: paths }
+}
+
+/**
+ * Having picked worktrees by hand, also offer to delete their remote
+ * branches, unless the flag already asked for it or none has one.
+ */
+async function askDeleteRemoteBranch(
+  selected: WorktreeReport[],
+  options: CleanupOptions,
+): Promise<CleanupOptions> {
+  if (options.deleteRemoteBranch || options.dryRun) return options
+  const pushed = selected.filter((report) => report.upstream).length
+  if (pushed === 0) return options
+  const deleteRemoteBranch = await confirm(
+    `Also delete the remote branch of ${pushed} pushed worktree(s)?`,
+    { assumeYes: false, defaultValue: false, what: 'Deleting remote branches' },
+  )
+  return { ...options, deleteRemoteBranch }
 }
 
 /** A worktree picked for removal, and the repo it belongs to. */
@@ -303,6 +322,10 @@ async function runCleanupAll(config: GroveConfig, options: CleanupOptions): Prom
       safeToggle(safe),
     )
     selected = candidates.filter((target) => chosen.includes(target.report.path))
+    options = await askDeleteRemoteBranch(
+      selected.map((target) => target.report),
+      options,
+    )
   }
 
   await removeTargets(selected, scope, config.useTrash, options)

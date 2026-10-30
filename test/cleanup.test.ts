@@ -132,6 +132,30 @@ describe('wt cleanup', () => {
     expect(worktrees.map((wt) => wt.path)).not.toContain(path)
   })
 
+  it('drops ignored files before trashing, but keeps untracked work', async ({ sandbox }) => {
+    const { path } = await newWorktree(sandbox, 'heavy deps')
+    await writeFile(join(path, '.gitignore'), 'node_modules/\n')
+    await gitIn(['add', '.gitignore'], path)
+    await gitIn(['commit', '-m', 'ignore node_modules'], path)
+    await mkdir(join(path, 'node_modules', 'dep'), { recursive: true })
+    await writeFile(join(path, 'node_modules', 'dep', 'index.js'), '\n')
+    await writeFile(join(path, 'wip.txt'), 'important\n')
+
+    const trashDir = join(sandbox.root, 'trash')
+    await mkdir(trashDir, { recursive: true })
+    const result = await runCli(
+      ['cleanup', 'demo', path, '--force', '--json'],
+      sandbox,
+      { GROVE_TRASH_DIR: trashDir },
+    )
+    expect(result.json<{ removed: unknown[] }>().removed).toHaveLength(1)
+
+    const trashed = join(trashDir, basename(path))
+    expect(existsSync(join(trashed, 'node_modules'))).toBe(false)
+    expect(existsSync(join(trashed, 'wip.txt'))).toBe(true)
+    expect(existsSync(join(trashed, 'README.md'))).toBe(true)
+  })
+
   it('falls back to a trash folder beside the worktrees', async ({ sandbox }) => {
     const { path } = await newWorktree(sandbox, 'local trash')
 

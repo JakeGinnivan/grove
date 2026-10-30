@@ -290,6 +290,19 @@ describe('wt cleanup', () => {
       return worktree
     }
 
+    /** Someone else pushes a commit to `branch` from their own clone. */
+    async function pushFromElsewhere(sandbox: Sandbox, branch: string) {
+      const other = join(sandbox.root, 'other-clone')
+      await gitIn(['clone', '--branch', branch, sandbox.remote, other], sandbox.root)
+      // Like the sandbox's own repos: CI has no global identity to fall back on.
+      await gitIn(['config', 'user.email', 'test@example.com'], other)
+      await gitIn(['config', 'user.name', 'Test'], other)
+      await writeFile(join(other, 'theirs.txt'), 'theirs\n')
+      await gitIn(['add', '.'], other)
+      await gitIn(['commit', '-m', 'theirs'], other)
+      await gitIn(['push', 'origin', branch], other)
+    }
+
     async function remoteHas(sandbox: Sandbox, branch: string): Promise<boolean> {
       return (await gitIn(['ls-remote', '--heads', 'origin', branch], sandbox.mainPath)) !== ''
     }
@@ -363,12 +376,7 @@ describe('wt cleanup', () => {
     it('skips when the remote branch has commits the local branch lacks', async ({ sandbox }) => {
       const { path, branch } = await pushedWorktree(sandbox, 'pushed elsewhere')
       // Someone else pushes to the branch; a fetch brings the commit in.
-      const other = join(sandbox.root, 'other-clone')
-      await gitIn(['clone', '--branch', branch, sandbox.remote, other], sandbox.root)
-      await writeFile(join(other, 'theirs.txt'), 'theirs\n')
-      await gitIn(['add', '.'], other)
-      await gitIn(['commit', '-m', 'theirs'], other)
-      await gitIn(['push', 'origin', branch], other)
+      await pushFromElsewhere(sandbox, branch)
       await gitIn(['fetch', 'origin'], path)
 
       const result = await runCli(
@@ -383,12 +391,7 @@ describe('wt cleanup', () => {
 
     it('refuses to delete a remote branch that moved since the last fetch', async ({ sandbox }) => {
       const { path, branch } = await pushedWorktree(sandbox, 'moved unseen')
-      const other = join(sandbox.root, 'other-clone')
-      await gitIn(['clone', '--branch', branch, sandbox.remote, other], sandbox.root)
-      await writeFile(join(other, 'theirs.txt'), 'theirs\n')
-      await gitIn(['add', '.'], other)
-      await gitIn(['commit', '-m', 'theirs'], other)
-      await gitIn(['push', 'origin', branch], other)
+      await pushFromElsewhere(sandbox, branch)
 
       const result = await runCli(
         ['cleanup', 'demo', path, '--yes', '--delete-remote-branch', '--no-trash', '--json'],

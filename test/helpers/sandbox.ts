@@ -58,9 +58,14 @@ function gitEnv(globalConfig = NULL_DEVICE): NodeJS.ProcessEnv {
     // with CRLF while the index holds LF — every file then reads as modified
     // and the checkout is permanently "dirty". Pin it off so the fixtures
     // behave the same on every platform.
-    GIT_CONFIG_COUNT: '1',
+    // A repo the fixtures create without its own user.email would pass on a
+    // laptop, where git guesses an identity from the hostname, and fail on CI,
+    // where it cannot. Never guess, so it fails everywhere.
+    GIT_CONFIG_COUNT: '2',
     GIT_CONFIG_KEY_0: 'core.autocrlf',
     GIT_CONFIG_VALUE_0: 'false',
+    GIT_CONFIG_KEY_1: 'user.useConfigOnly',
+    GIT_CONFIG_VALUE_1: 'true',
   }
 }
 

@@ -19,6 +19,7 @@ function report(dir: string, status: Partial<WorktreeReport> = {}): WorktreeRepo
     upstream: `origin/${dir}`,
     ahead: 0,
     merged: false,
+    squashMerged: false,
     base: 'origin/main',
     behindBase: null,
     parent: null,

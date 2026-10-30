@@ -10,6 +10,7 @@ import {
   aheadCount,
   defaultBase,
   isMergedInto,
+  isSquashOrRebaseMergedInto,
   behindOnMainline,
 } from './git.js'
 import { stackParentOf } from './worktree.js'
@@ -31,6 +32,11 @@ export interface WorktreeReport {
   ahead: number
   /** Contained in `base`, including a branch with no commits of its own. */
   merged: boolean
+  /**
+   * `merged` because the branch's changes landed in `base` as new commits, by
+   * a squash or rebase merge, rather than the branch tip itself.
+   */
+  squashMerged: boolean
   /** The default branch status is compared against, e.g. `origin/main`. */
   base: string | null
   /**
@@ -89,6 +95,7 @@ export async function loadWorktrees(
         upstream: null,
         ahead: 0,
         merged: false,
+        squashMerged: false,
         base: base ?? null,
         behindBase: null,
         parent: null,
@@ -101,10 +108,15 @@ export async function loadWorktrees(
       if (wt.branch) {
         report.parent = (await stackParentOf(gitDir, wt.branch)) ?? null
         if (base) {
-          report.merged = await isMergedInto(gitDir, `refs/heads/${wt.branch}`, base)
+          const ref = `refs/heads/${wt.branch}`
+          report.merged = await isMergedInto(gitDir, ref, base)
+          if (!report.merged && !report.isMain) {
+            report.squashMerged = await isSquashOrRebaseMergedInto(gitDir, ref, base)
+            report.merged = report.squashMerged
+          }
         }
       }
-      if (base && wt.head && report.merged) {
+      if (base && wt.head && report.merged && !report.squashMerged) {
         report.behindBase = (await behindOnMainline(gitDir, wt.head, base)) ?? null
       }
       return report
@@ -173,7 +185,9 @@ function statusTags(report: WorktreeReport): { text: string; color: Color }[] {
       ? { text: '● uncommitted changes', color: 'yellow' }
       : { text: '○ clean', color: 'green' },
   ]
-  if (merged) tags.push({ text: '✔ merged', color: 'green' })
+  if (merged) {
+    tags.push({ text: report.squashMerged ? '✔ squash-merged' : '✔ merged', color: 'green' })
+  }
   if (report.behindBase === 0) tags.push({ text: `= ${report.base}`, color: 'green' })
   if (report.behindBase) {
     tags.push({ text: `${report.behindBase} behind ${report.base}`, color: 'cyan' })

@@ -39,10 +39,11 @@ grove cleanup <repo> --merged --yes --delete-branch --json
 ```
 
 grove's `merged` means the branch tip is an ancestor of the default branch,
-which also covers branches with no commits of their own. A **squash- or
-rebase-merged** PR fails that test, so grove reports it as
-unmerged. Close the gap with GitHub, for each remaining clean worktree on a
-branch:
+which also covers branches with no commits of their own, or that its changes
+landed there by a **squash or rebase merge** (`squashMerged: true`). grove
+recognises those by matching patches, so a squash whose conflicts were
+resolved differently from the branch still reads as unmerged. Close that gap
+with GitHub, for each remaining clean worktree on a branch:
 
 ```bash
 gh pr list --repo <owner/name> --head <branch> --state merged \

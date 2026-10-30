@@ -231,6 +231,7 @@ ${commandLines}
                   '--force[remove even when dirty]' \\
                   '(-y --yes)'{-y,--yes}'[skip confirmation]' \\
                   '--delete-branch[also delete the local branch]' \\
+                  '--delete-remote-branch[also delete the remote branch]' \\
                   '--no-trash[delete permanently]' \\
                   '--dry-run[show what would be removed]' \\
                   '*:worktree:{_grove_describe_from worktrees worktrees "$words[2]"}'

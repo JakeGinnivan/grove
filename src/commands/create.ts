@@ -5,23 +5,36 @@ import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import {
   loadConfig,
+  saveConfig,
   expandHome,
   codeDirFor,
+  type GroveConfig,
 } from '../core/config.js'
 import {
+  readRegistry,
   registryIdentifierProblem,
   validateRegistryIdentifier,
   writeRepo,
 } from '../core/registry.js'
 import { git } from '../core/git.js'
-import { optionalText, select, confirm, canPrompt } from '../core/prompts.js'
+import {
+  optionalText,
+  requireText,
+  select,
+  confirm,
+  canPrompt,
+  type SelectOption,
+} from '../core/prompts.js'
 import { emitJson, emitCd, log, success, info, getOutputContext } from '../core/output.js'
 import { WtError } from '../core/errors.js'
 import { chooseProfile } from './shared.js'
 import {
   ghStatus,
   createGithubRepo,
+  githubOwnerOf,
+  groupOwners,
   isVisibility,
+  listGithubOwners,
   VISIBILITIES,
   type Visibility,
   type CreatedRepo,
@@ -108,7 +121,7 @@ async function runCreate(name: string, options: CreateOptions): Promise<void> {
 
   await writeRepo(config.reposFile, name, repoParent, alias)
 
-  const github = await maybeCreateOnGithub(name, mainPath, options)
+  const github = await maybeCreateOnGithub(config, name, mainPath, options)
 
   if (getOutputContext().json) {
     emitJson({
@@ -164,6 +177,7 @@ async function runCreate(name: string, options: CreateOptions): Promise<void> {
  * a worse outcome than an unwired remote the user can add later.
  */
 async function maybeCreateOnGithub(
+  config: GroveConfig,
   name: string,
   mainPath: string,
   options: CreateOptions,
@@ -199,15 +213,108 @@ async function maybeCreateOnGithub(
     if (!wants) return undefined
   }
 
+  const owner = await chooseOwner(config, options.owner, explicit)
   const visibility = await chooseVisibility(requestedVisibility, explicit)
 
-  info(`Creating ${name} on GitHub (${visibility})...`)
-  return createGithubRepo({
+  info(`Creating ${owner ? `${owner}/` : ''}${name} on GitHub (${visibility})...`)
+  const created = await createGithubRepo({
     name,
     source: mainPath,
     visibility,
-    ...(options.owner ? { owner: options.owner } : {}),
+    ...(owner ? { owner } : {}),
   })
+  await rememberOwner(created.nameWithOwner.split('/')[0])
+  return created
+}
+
+const OTHER_OWNER = '\u0000other'
+const DIVIDER = '\u0000divider'
+
+/**
+ * The GitHub owner to create under; undefined means the authenticated user.
+ *
+ * Owners that registered repos already push to are listed first, so the
+ * handful that matter are not buried among every org the account belongs to.
+ */
+async function chooseOwner(
+  config: GroveConfig,
+  requested: string | undefined,
+  explicit: boolean,
+): Promise<string | undefined> {
+  if (requested) return requested
+  // As with visibility, --github alone does not stop to ask.
+  if (explicit || !canPrompt()) return undefined
+
+  const available = await listGithubOwners()
+  if (!available) {
+    return optionalText(undefined, {
+      message: 'GitHub owner? (blank for your account)',
+      placeholder: config.lastGithubOwner ?? '',
+    })
+  }
+
+  const { used, other } = groupOwners(
+    available,
+    await registeredRemoteOwners(config),
+    config.lastGithubOwner,
+  )
+  const label = (owner: string) =>
+    owner.toLowerCase() === available.login.toLowerCase() ? `${owner} (you)` : owner
+  const options: SelectOption[] = [
+    ...used.map(({ owner, localRepos }) => ({
+      value: owner,
+      label: label(owner),
+      hint: localRepos === 1 ? '1 local repo' : `${localRepos} local repos`,
+    })),
+    ...(used.length > 0 && other.length > 0
+      ? [{ value: DIVIDER, label: '── not used yet ──', disabled: true }]
+      : []),
+    ...other.map((owner) => ({ value: owner, label: label(owner) })),
+    { value: OTHER_OWNER, label: 'Other…', hint: 'type an owner' },
+  ]
+
+  const chosen = await select(
+    'GitHub owner?',
+    options,
+    'A GitHub owner',
+    used[0]?.owner ?? available.login,
+  )
+  if (chosen === OTHER_OWNER) {
+    return requireText(undefined, {
+      message: 'GitHub user or org',
+      flag: '--owner',
+      what: 'A GitHub owner',
+    })
+  }
+  return chosen
+}
+
+/** The GitHub owner of every registered repo's origin, one entry per repo. */
+async function registeredRemoteOwners(config: GroveConfig): Promise<string[]> {
+  const entries = (await readRegistry(config.reposFile)).filter((e) => !e.aliasOf)
+  const owners = await Promise.all(
+    entries.map(async ({ path }) => {
+      const checkout = existsSync(join(path, 'main')) ? join(path, 'main') : path
+      const { stdout } = await git(['config', '--get', 'remote.origin.url'], {
+        cwd: checkout,
+        allowFailure: true,
+      })
+      return stdout ? githubOwnerOf(stdout) : undefined
+    }),
+  )
+  return owners.filter((owner): owner is string => owner !== undefined)
+}
+
+/** Best effort: a config that cannot be written should not fail a create. */
+async function rememberOwner(owner: string | undefined): Promise<void> {
+  if (!owner) return
+  try {
+    const config = await loadConfig({ env: false })
+    if (config.lastGithubOwner === owner) return
+    await saveConfig({ ...config, lastGithubOwner: owner })
+  } catch {
+    // The default just stays where it was.
+  }
 }
 
 function parseVisibility(value: string): Visibility {

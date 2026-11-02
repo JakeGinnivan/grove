@@ -116,3 +116,88 @@ export async function createGithubRepo(
   const parsed = JSON.parse(stdout) as CreatedRepo
   return parsed
 }
+
+export interface GithubOwners {
+  /** The authenticated user's login, i.e. where a bare repo name lands. */
+  login: string
+  /** Orgs the user belongs to, as GitHub lists them. */
+  orgs: string[]
+}
+
+/**
+ * Who `gh` can create repos under, or undefined when it cannot say.
+ *
+ * Membership is only visible with the `read:org` scope; without it GitHub
+ * returns public memberships alone, so the list can be short. Callers offer
+ * free-text entry for that reason.
+ */
+export async function listGithubOwners(): Promise<GithubOwners | undefined> {
+  try {
+    const [user, orgs] = await Promise.all([
+      execFileAsync('gh', ['api', 'user', '--jq', '.login']),
+      execFileAsync('gh', ['api', 'user/orgs', '--paginate', '--jq', '.[].login']),
+    ])
+    const login = user.stdout.trim()
+    if (!login) return undefined
+    return { login, orgs: orgs.stdout.split('\n').map((o) => o.trim()).filter(Boolean) }
+  } catch {
+    return undefined
+  }
+}
+
+/** The owner segment of a github.com remote URL, in any of git's URL forms. */
+export function githubOwnerOf(remoteUrl: string): string | undefined {
+  const match = /github\.com[:/]+([^/]+)\/[^/]+?$/.exec(remoteUrl.trim())
+  return match?.[1]
+}
+
+export interface OwnerGroups {
+  /** Owners that already have repos registered locally, best guess first. */
+  used: { owner: string; localRepos: number }[]
+  other: string[]
+}
+
+/**
+ * Split the owners `gh` can create under by whether any registered repo's
+ * origin already points at them. Remotes are the evidence of use because they
+ * exist for every repo, however it got here; owners seen only in remotes are
+ * dropped, since a clone of someone else's org is no place to create a repo.
+ */
+export function groupOwners(
+  available: GithubOwners,
+  remoteOwners: string[],
+  lastUsed?: string,
+): OwnerGroups {
+  const key = (owner: string) => owner.toLowerCase()
+  const counts = new Map<string, number>()
+  for (const owner of remoteOwners) {
+    counts.set(key(owner), (counts.get(key(owner)) ?? 0) + 1)
+  }
+
+  const seen = new Set<string>()
+  const owners = [available.login, ...available.orgs].filter((owner) => {
+    if (seen.has(key(owner))) return false
+    seen.add(key(owner))
+    return true
+  })
+
+  const isLast = (owner: string) => lastUsed !== undefined && key(owner) === key(lastUsed)
+  const used = owners
+    .filter((owner) => counts.has(key(owner)) || isLast(owner))
+    .map((owner) => ({ owner, localRepos: counts.get(key(owner)) ?? 0 }))
+    .sort(
+      (a, b) =>
+        Number(isLast(b.owner)) - Number(isLast(a.owner)) ||
+        b.localRepos - a.localRepos ||
+        a.owner.localeCompare(b.owner),
+    )
+  const usedKeys = new Set(used.map((u) => key(u.owner)))
+  const other = owners
+    .filter((owner) => !usedKeys.has(key(owner)))
+    .sort((a, b) =>
+      // The personal account stays at the top of the unused group too.
+      Number(key(b) === key(available.login)) - Number(key(a) === key(available.login)) ||
+      a.localeCompare(b, undefined, { sensitivity: 'base' }),
+    )
+  return { used, other }
+}

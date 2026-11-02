@@ -136,6 +136,8 @@ export interface SelectOption {
   value: string
   label: string
   hint?: string | undefined
+  /** Shown but not selectable, e.g. a divider between groups. */
+  disabled?: boolean
 }
 
 export async function select(

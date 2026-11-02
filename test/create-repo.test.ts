@@ -206,11 +206,11 @@ describe('wt create --github', () => {
     // The fake reports every repo as me/thing, which is what gets remembered.
     const config = JSON.parse(
       await readFile(join(sandbox.root, '.config', 'grove', 'config.json'), 'utf8'),
-    ) as { lastGithubOwner?: string }
-    expect(config.lastGithubOwner).toBe('me')
+    ) as { recentGithubOwners?: string[] }
+    expect(config.recentGithubOwners).toEqual(['me'])
   })
 
-  it('offers owners with local repos ahead of the rest', async ({ sandbox }) => {
+  it('offers you first, then orgs already in use, then the rest', async ({ sandbox }) => {
     const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
     await gitIn(
       ['remote', 'set-url', 'origin', 'git@github.com:ginnivan/demo.git'],
@@ -227,14 +227,32 @@ describe('wt create --github', () => {
     expect(result.exitCode).toBe(0)
 
     const menu = result.stderr.slice(result.stderr.indexOf('GitHub owner?'))
-    const order = ['ginnivan', 'not used yet', 'me (you)', 'acme', 'zeta', 'Other']
+    const order = ['me (you)', 'ginnivan', 'not used yet', 'acme', 'zeta', 'Other']
     const positions = order.map((text) => menu.indexOf(text))
     expect(positions.every((p) => p >= 0)).toBe(true)
     expect(positions).toEqual([...positions].sort((a, b) => a - b))
-    expect(menu).toContain('1 local repo')
 
-    // Enter takes the default: the one owner already in use.
-    expect(await readFile(logFile, 'utf8')).toContain('repo create ginnivan/picked ')
+    // Enter takes the default, your own account.
+    expect(await readFile(logFile, 'utf8')).toContain('repo create me/picked ')
+  })
+
+  it('creates under an org picked from the list', async ({ sandbox }) => {
+    const { env, logFile } = await fakeGh(sandbox, LOGGED_IN)
+    await gitIn(
+      ['remote', 'set-url', 'origin', 'git@github.com:ginnivan/demo.git'],
+      sandbox.mainPath,
+    )
+    const result = await runCliWithTty(['create', 'orgpick', '--no-alias'], sandbox, env, {
+      steps: [
+        { answerWhen: 'on GitHub too?', keys: 'y' },
+        { answerWhen: 'GitHub owner?', keys: '\u001b[B\r' },
+        { answerWhen: 'Visibility?' },
+      ],
+    })
+    expect(result.exitCode).toBe(0)
+    // clack draws a hint only on the highlighted row.
+    expect(result.stderr).toContain('1 local repo')
+    expect(await readFile(logFile, 'utf8')).toContain('repo create ginnivan/orgpick ')
   })
 
   it('rejects an unknown visibility before calling gh', async ({ sandbox }) => {

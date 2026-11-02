@@ -2,4 +2,4 @@
 '@jakeginnivan/grove': minor
 ---
 
-`grove create` now asks which GitHub user or org to create the repo under when it creates one on GitHub interactively. Owners that your registered repos already push to are listed first with a count of local repos, then the rest of your orgs, then an "Other…" entry for an owner you type. The owner you last created under is the default. `--owner` still skips the prompt, and `--github` on its own still creates under your account without asking.
+`grove create` now asks which GitHub user or org to create the repo under when it creates one on GitHub interactively. Your own account is listed first and is the default. Next come the orgs you have used, most recently created-under first, then those your registered repos push to. The rest of your orgs follow, then an "Other…" entry for an owner you type. `--owner` still skips the prompt, and `--github` on its own still creates under your account without asking.

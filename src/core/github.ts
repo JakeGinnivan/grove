@@ -151,53 +151,64 @@ export function githubOwnerOf(remoteUrl: string): string | undefined {
   return match?.[1]
 }
 
+export interface OwnerChoice {
+  owner: string
+  localRepos: number
+}
+
 export interface OwnerGroups {
-  /** Owners that already have repos registered locally, best guess first. */
-  used: { owner: string; localRepos: number }[]
+  /** The authenticated user, always offered first as the safe default. */
+  you: OwnerChoice
+  /** Orgs created under recently or with repos registered locally, latest first. */
+  used: OwnerChoice[]
   other: string[]
 }
 
 /**
- * Split the owners `gh` can create under by whether any registered repo's
- * origin already points at them. Remotes are the evidence of use because they
- * exist for every repo, however it got here; owners seen only in remotes are
- * dropped, since a clone of someone else's org is no place to create a repo.
+ * Split the orgs `gh` can create under by whether they have been used:
+ * created under by grove (`recent`, newest first), or pushed to by a
+ * registered repo's origin. Remotes count because they exist for every repo,
+ * however it got here; owners seen only in remotes are dropped, since a clone
+ * of someone else's org is no place to create a repo.
  */
 export function groupOwners(
   available: GithubOwners,
   remoteOwners: string[],
-  lastUsed?: string,
+  recent: string[] = [],
 ): OwnerGroups {
   const key = (owner: string) => owner.toLowerCase()
   const counts = new Map<string, number>()
   for (const owner of remoteOwners) {
     counts.set(key(owner), (counts.get(key(owner)) ?? 0) + 1)
   }
+  const choice = (owner: string): OwnerChoice => ({
+    owner,
+    localRepos: counts.get(key(owner)) ?? 0,
+  })
 
-  const seen = new Set<string>()
-  const owners = [available.login, ...available.orgs].filter((owner) => {
-    if (seen.has(key(owner))) return false
-    seen.add(key(owner))
+  const seen = new Set([key(available.login)])
+  const orgs = available.orgs.filter((org) => {
+    if (seen.has(key(org))) return false
+    seen.add(key(org))
     return true
   })
 
-  const isLast = (owner: string) => lastUsed !== undefined && key(owner) === key(lastUsed)
-  const used = owners
-    .filter((owner) => counts.has(key(owner)) || isLast(owner))
-    .map((owner) => ({ owner, localRepos: counts.get(key(owner)) ?? 0 }))
+  const recency = (owner: string) => {
+    const at = recent.findIndex((r) => key(r) === key(owner))
+    return at === -1 ? Infinity : at
+  }
+  const used = orgs
+    .filter((org) => counts.has(key(org)) || recency(org) !== Infinity)
+    .map(choice)
     .sort(
       (a, b) =>
-        Number(isLast(b.owner)) - Number(isLast(a.owner)) ||
+        recency(a.owner) - recency(b.owner) ||
         b.localRepos - a.localRepos ||
-        a.owner.localeCompare(b.owner),
+        a.owner.localeCompare(b.owner, undefined, { sensitivity: 'base' }),
     )
   const usedKeys = new Set(used.map((u) => key(u.owner)))
-  const other = owners
-    .filter((owner) => !usedKeys.has(key(owner)))
-    .sort((a, b) =>
-      // The personal account stays at the top of the unused group too.
-      Number(key(b) === key(available.login)) - Number(key(a) === key(available.login)) ||
-      a.localeCompare(b, undefined, { sensitivity: 'base' }),
-    )
-  return { used, other }
+  const other = orgs
+    .filter((org) => !usedKeys.has(key(org)))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  return { you: choice(available.login), used, other }
 }

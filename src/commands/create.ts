@@ -227,14 +227,15 @@ async function maybeCreateOnGithub(
   return created
 }
 
+const RECENT_OWNERS = 10
 const OTHER_OWNER = '\u0000other'
 const DIVIDER = '\u0000divider'
 
 /**
  * The GitHub owner to create under; undefined means the authenticated user.
  *
- * Owners that registered repos already push to are listed first, so the
- * handful that matter are not buried among every org the account belongs to.
+ * Your own account comes first, then the orgs you have used, latest first, so
+ * the handful that matter are not buried among every org you belong to.
  */
 async function chooseOwner(
   config: GroveConfig,
@@ -249,36 +250,30 @@ async function chooseOwner(
   if (!available) {
     return optionalText(undefined, {
       message: 'GitHub owner? (blank for your account)',
-      placeholder: config.lastGithubOwner ?? '',
+      placeholder: config.recentGithubOwners?.[0] ?? '',
     })
   }
 
-  const { used, other } = groupOwners(
+  const { you, used, other } = groupOwners(
     available,
     await registeredRemoteOwners(config),
-    config.lastGithubOwner,
+    config.recentGithubOwners,
   )
-  const label = (owner: string) =>
-    owner.toLowerCase() === available.login.toLowerCase() ? `${owner} (you)` : owner
+  const hint = (localRepos: number) =>
+    localRepos === 0 ? undefined : localRepos === 1 ? '1 local repo' : `${localRepos} local repos`
   const options: SelectOption[] = [
-    ...used.map(({ owner, localRepos }) => ({
-      value: owner,
-      label: label(owner),
-      hint: localRepos === 1 ? '1 local repo' : `${localRepos} local repos`,
-    })),
+    { value: you.owner, label: `${you.owner} (you)`, hint: hint(you.localRepos) },
+    ...used.map(({ owner, localRepos }) => ({ value: owner, label: owner, hint: hint(localRepos) })),
     ...(used.length > 0 && other.length > 0
       ? [{ value: DIVIDER, label: '── not used yet ──', disabled: true }]
       : []),
-    ...other.map((owner) => ({ value: owner, label: label(owner) })),
+    ...other.map((owner) => ({ value: owner, label: owner })),
     { value: OTHER_OWNER, label: 'Other…', hint: 'type an owner' },
   ]
 
-  const chosen = await select(
-    'GitHub owner?',
-    options,
-    'A GitHub owner',
-    used[0]?.owner ?? available.login,
-  )
+  // Your own account is the default: a repo created there by mistake is
+  // private to you, whereas one in an org is visible to its members.
+  const chosen = await select('GitHub owner?', options, 'A GitHub owner', you.owner)
   if (chosen === OTHER_OWNER) {
     return requireText(undefined, {
       message: 'GitHub user or org',
@@ -310,8 +305,10 @@ async function rememberOwner(owner: string | undefined): Promise<void> {
   if (!owner) return
   try {
     const config = await loadConfig({ env: false })
-    if (config.lastGithubOwner === owner) return
-    await saveConfig({ ...config, lastGithubOwner: owner })
+    const recent = config.recentGithubOwners ?? []
+    if (recent[0] === owner) return
+    const rest = recent.filter((r) => r.toLowerCase() !== owner.toLowerCase())
+    await saveConfig({ ...config, recentGithubOwners: [owner, ...rest].slice(0, RECENT_OWNERS) })
   } catch {
     // The default just stays where it was.
   }

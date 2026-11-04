@@ -116,3 +116,99 @@ export async function createGithubRepo(
   const parsed = JSON.parse(stdout) as CreatedRepo
   return parsed
 }
+
+export interface GithubOwners {
+  /** The authenticated user's login, i.e. where a bare repo name lands. */
+  login: string
+  /** Orgs the user belongs to, as GitHub lists them. */
+  orgs: string[]
+}
+
+/**
+ * Who `gh` can create repos under, or undefined when it cannot say.
+ *
+ * Membership is only visible with the `read:org` scope; without it GitHub
+ * returns public memberships alone, so the list can be short. Callers offer
+ * free-text entry for that reason.
+ */
+export async function listGithubOwners(): Promise<GithubOwners | undefined> {
+  try {
+    const [user, orgs] = await Promise.all([
+      execFileAsync('gh', ['api', 'user', '--jq', '.login']),
+      execFileAsync('gh', ['api', 'user/orgs', '--paginate', '--jq', '.[].login']),
+    ])
+    const login = user.stdout.trim()
+    if (!login) return undefined
+    return { login, orgs: orgs.stdout.split('\n').map((o) => o.trim()).filter(Boolean) }
+  } catch {
+    return undefined
+  }
+}
+
+/** The owner segment of a github.com remote URL, in any of git's URL forms. */
+export function githubOwnerOf(remoteUrl: string): string | undefined {
+  const match = /github\.com[:/]+([^/]+)\/[^/]+?$/.exec(remoteUrl.trim())
+  return match?.[1]
+}
+
+export interface OwnerChoice {
+  owner: string
+  localRepos: number
+}
+
+export interface OwnerGroups {
+  /** The authenticated user, always offered first as the safe default. */
+  you: OwnerChoice
+  /** Orgs created under recently or with repos registered locally, latest first. */
+  used: OwnerChoice[]
+  other: string[]
+}
+
+/**
+ * Split the orgs `gh` can create under by whether they have been used:
+ * created under by grove (`recent`, newest first), or pushed to by a
+ * registered repo's origin. Remotes count because they exist for every repo,
+ * however it got here; owners seen only in remotes are dropped, since a clone
+ * of someone else's org is no place to create a repo.
+ */
+export function groupOwners(
+  available: GithubOwners,
+  remoteOwners: string[],
+  recent: string[] = [],
+): OwnerGroups {
+  const key = (owner: string) => owner.toLowerCase()
+  const counts = new Map<string, number>()
+  for (const owner of remoteOwners) {
+    counts.set(key(owner), (counts.get(key(owner)) ?? 0) + 1)
+  }
+  const choice = (owner: string): OwnerChoice => ({
+    owner,
+    localRepos: counts.get(key(owner)) ?? 0,
+  })
+
+  const seen = new Set([key(available.login)])
+  const orgs = available.orgs.filter((org) => {
+    if (seen.has(key(org))) return false
+    seen.add(key(org))
+    return true
+  })
+
+  const recency = (owner: string) => {
+    const at = recent.findIndex((r) => key(r) === key(owner))
+    return at === -1 ? Infinity : at
+  }
+  const used = orgs
+    .filter((org) => counts.has(key(org)) || recency(org) !== Infinity)
+    .map(choice)
+    .sort(
+      (a, b) =>
+        recency(a.owner) - recency(b.owner) ||
+        b.localRepos - a.localRepos ||
+        a.owner.localeCompare(b.owner, undefined, { sensitivity: 'base' }),
+    )
+  const usedKeys = new Set(used.map((u) => key(u.owner)))
+  const other = orgs
+    .filter((org) => !usedKeys.has(key(org)))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  return { you: choice(available.login), used, other }
+}

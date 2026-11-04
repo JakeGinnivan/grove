@@ -39,6 +39,8 @@ export interface GroveConfig {
    * detection order. Empty turns the prompt off.
    */
   taskTrackers: TaskTrackerId[]
+  /** GitHub owners `grove create` has created repos under, most recent first. */
+  recentGithubOwners?: string[]
   /** Claude permission entries owned by Grove, used to revoke stale grants. */
   managedClaudePermissions?: {
     additionalDirectories: string[]

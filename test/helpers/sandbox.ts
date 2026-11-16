@@ -217,7 +217,95 @@ export async function runCli(
   sandbox: Sandbox,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<RunResult> {
-  const env: NodeJS.ProcessEnv = {
+  const env = cliEnv(sandbox, extraEnv)
+
+  const started = Date.now()
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      [CLI, ...args],
+      { env, cwd: extraEnv['PWD'] ?? sandbox.root, timeout: COMMAND_TIMEOUT_MS },
+    )
+    return makeResult(stdout, stderr, 0)
+  } catch (error) {
+    const err = error as {
+      stdout?: string
+      stderr?: string
+      code?: number
+      killed?: boolean
+    }
+    if (err.killed) throw timedOut(['grove', ...args], started, err.stdout, err.stderr)
+    return makeResult(err.stdout ?? '', err.stderr ?? '', err.code ?? 1)
+  }
+}
+
+/** A CLI run left going in the background, for long-running commands. */
+export interface BackgroundCli {
+  /** Resolves with the first stdout line `match` accepts. */
+  waitForLine: (match: (line: string) => boolean) => Promise<string>
+  signal: (name: NodeJS.Signals) => void
+  /** Resolves once the process exits. */
+  exited: Promise<{ exitCode: number; stdout: string; stderr: string }>
+}
+
+/**
+ * Start the CLI without waiting for it, for commands that run until
+ * signalled. It is killed if it is still running after the command timeout,
+ * so a test that never stops it cannot hang the suite.
+ */
+export function startCli(
+  args: string[],
+  sandbox: Sandbox,
+  extraEnv: NodeJS.ProcessEnv = {},
+): BackgroundCli {
+  const child = spawn(process.execPath, [CLI, ...args], {
+    cwd: extraEnv['PWD'] ?? sandbox.root,
+    env: cliEnv(sandbox, extraEnv),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  const waiters: { match: (line: string) => boolean; resolve: (line: string) => void }[] = []
+  const lines: string[] = []
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk
+    const complete = stdout.split('\n').slice(0, -1)
+    for (const line of complete.slice(lines.length)) {
+      lines.push(line)
+      for (const waiter of [...waiters]) {
+        if (waiter.match(line)) {
+          waiters.splice(waiters.indexOf(waiter), 1)
+          waiter.resolve(line)
+        }
+      }
+    }
+  })
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+  const timer = setTimeout(() => child.kill('SIGKILL'), COMMAND_TIMEOUT_MS)
+  const exited = new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ exitCode: code ?? 1, stdout, stderr })
+    })
+  })
+  return {
+    waitForLine: (match) => {
+      const seen = lines.find(match)
+      if (seen !== undefined) return Promise.resolve(seen)
+      return new Promise((resolve, reject) => {
+        waiters.push({ match, resolve })
+        void exited.then(() => reject(new Error(
+          `exited before the expected line.\n--- stderr ---\n${stderr}\n--- stdout ---\n${stdout}`,
+        )))
+      })
+    },
+    signal: (name) => { child.kill(name) },
+    exited,
+  }
+}
+
+function cliEnv(sandbox: Sandbox, extraEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
     ...process.env,
     // HOME is redirected so the CLI reads a sandboxed ~/.config/grove and
     // never picks up (or writes to) the developer's real configuration.
@@ -243,25 +331,6 @@ export async function runCli(
     // that exercise the integration put a fake gh on PATH and unset this.
     GROVE_NO_GITHUB: '1',
     ...extraEnv,
-  }
-
-  const started = Date.now()
-  try {
-    const { stdout, stderr } = await execFileAsync(
-      process.execPath,
-      [CLI, ...args],
-      { env, cwd: extraEnv['PWD'] ?? sandbox.root, timeout: COMMAND_TIMEOUT_MS },
-    )
-    return makeResult(stdout, stderr, 0)
-  } catch (error) {
-    const err = error as {
-      stdout?: string
-      stderr?: string
-      code?: number
-      killed?: boolean
-    }
-    if (err.killed) throw timedOut(['grove', ...args], started, err.stdout, err.stderr)
-    return makeResult(err.stdout ?? '', err.stderr ?? '', err.code ?? 1)
   }
 }
 

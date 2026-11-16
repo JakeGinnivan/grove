@@ -54,7 +54,7 @@ wt new my-service "fix flaky login test"       # new branch + worktree, cd'd int
 wt pick my-service                             # jump between worktrees
 wt checkout my-service colleague/their-branch  # review someone's branch
 wt sync                                        # fast-forward every main checkout
-wt focus                                       # run this worktree's commit in the one focus checkout
+wt focus --watch                               # run this worktree's commits in the one focus checkout
 wt cleanup my-service --merged                 # remove worktrees that have merged
 ```
 

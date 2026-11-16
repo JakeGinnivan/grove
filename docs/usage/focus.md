@@ -45,6 +45,8 @@ grove, put it in the directory holding `main/`, where it is never committed:
 ```bash
 wt focus                      # inside a worktree: check its HEAD out in focus/
 wt focus 260810-fix-login     # or name the worktree
+wt focus --watch              # ...and keep following its commits until Ctrl-C
+wt focus pull                 # from anywhere: move focus/ to the owner's latest commit
 wt focus status               # what is focused, and how far behind it is
 wt focus release              # run release hooks; focus/ stays where it is
 ```
@@ -54,13 +56,38 @@ The first `wt focus` creates `focus/`. After that it moves it.
 `focus/` is checked out at the worktree's commit, detached, never on its
 branch. If two worktrees had the same branch checked out, committing in one
 would move the branch under the other, leaving its files out of step with its
-HEAD. Detached, `focus/` only ever moves when you run `wt focus`. So commit,
-then run `wt focus` again to bring `focus/` up to date; `wt focus status`
-says how many commits it is behind.
+HEAD. Detached, `focus/` only ever moves when grove moves it.
 
 Only committed work moves across. `focus` refuses a worktree with uncommitted
 changes, and refuses to overwrite changes in `focus/` itself (often files the
 app regenerated) unless you pass `--discard`.
+
+## Keeping it up to date
+
+Work flows one way: edit and commit in the worktree, then move `focus/` on.
+A running app usually picks up the changed files by itself (Rails' reloader,
+a Vite dev server), so there is nothing to restart.
+
+- **`wt focus pull`** moves `focus/` to the owner's latest commit. It works
+  from any directory in the repo, including `focus/` itself, and does nothing
+  if `focus/` is already there. Uncommitted changes in the worktree stay
+  behind, as they always would.
+- **`wt focus --watch`** focuses, then pulls each new commit as it lands
+  (checking every 2 seconds; change it with `--interval`). Stop it with Ctrl-C
+  and it releases the focus worktree. A second Ctrl-C exits without
+  releasing. Ctrl-C also interrupts a hook that is running at the time. If another worktree takes `focus/` over meanwhile, the watcher
+  stops and leaves it alone. A commit that fails to pull (a hook fails,
+  `focus/` has changes) is reported and skipped until the next commit.
+
+Activate hooks run on every pull, so keep them cheap: compare
+`GROVE_FOCUS_FROM` and `GROVE_FOCUS_TO` and only install or migrate when the
+files that need it changed.
+
+If something does get committed in `focus/`, grove will not move it and
+strand those commits on no branch. It stops with `focus_has_commits` and
+names the command that brings them to the worktree, usually
+`git -C <worktree> merge --ff-only <commit>`. Once the worktree has them,
+pulling carries on.
 
 ## Handing over
 

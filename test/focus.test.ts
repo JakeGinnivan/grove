@@ -2,7 +2,7 @@ import { describe, expect } from 'vitest'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { runCli, gitIn, type Sandbox } from './helpers/sandbox.js'
+import { runCli, startCli, gitIn, type Sandbox } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
 import { expectError, newWorktree } from './helpers/grove.js'
 
@@ -289,5 +289,90 @@ describe('focus in list and cleanup', () => {
     const inside = await runCli(['cleanup', 'self', '--yes', '--json'], sandbox, { PWD: data.path })
     expectError(inside, 'is_focus_worktree')
     expect(existsSync(data.path)).toBe(true)
+  })
+})
+
+describe('grove focus pull', () => {
+  it('moves the focus worktree to its owner\'s latest commit, from anywhere', async ({ sandbox }) => {
+    await enableFocus(sandbox)
+    const wt = await newWorktree(sandbox, 'pulled owner')
+    const data = await focused(sandbox, wt.path)
+    const newer = await commit(wt.path, 'newer.txt')
+    // A dirty owner is fine: pull only ever takes what is committed.
+    await writeFile(join(wt.path, 'wip.txt'), 'wip\n')
+
+    const pull = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: data.path })
+    expect(pull.exitCode, pull.stderr).toBe(0)
+    expect(pull.json()).toMatchObject({ updated: true, from: data.commit, to: newer })
+    expect(await gitIn(['rev-parse', 'HEAD'], data.path)).toBe(newer)
+    expect(existsSync(join(data.path, 'wip.txt'))).toBe(false)
+
+    const again = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: sandbox.mainPath })
+    expect(again.json()).toMatchObject({ updated: false })
+  })
+
+  it('fails when nothing is focused', async ({ sandbox }) => {
+    await enableFocus(sandbox)
+    const result = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: sandbox.mainPath })
+    expectError(result, 'focus_not_owned')
+  })
+
+  it('refuses to strand commits made in the focus worktree', async ({ sandbox }) => {
+    await enableFocus(sandbox)
+    const wt = await newWorktree(sandbox, 'strand guard')
+    const data = await focused(sandbox, wt.path)
+    const stray = await commit(data.path, 'made-in-focus.txt')
+
+    const error = expectError(
+      await runCli(['focus', 'pull', '--json'], sandbox, { PWD: data.path }),
+      'focus_has_commits',
+    )
+    expect(error.hint).toContain(`git -C ${wt.path} merge --ff-only ${stray.slice(0, 12)}`)
+
+    // Once the worktree has them, they are home and the pull goes ahead.
+    await gitIn(['merge', '--ff-only', stray], wt.path)
+    const pull = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: data.path })
+    expect(pull.exitCode, pull.stderr).toBe(0)
+    expect((await status(sandbox)).commit).toBe(stray)
+  })
+})
+
+describe('grove focus --watch', () => {
+  const isEvent = (name: string) => (line: string) =>
+    (JSON.parse(line) as { event: string }).event === name
+
+  it('pulls new commits as they land and releases when stopped', async ({ sandbox }) => {
+    const log = await writeHookConfig(sandbox, 'local')
+    const wt = await newWorktree(sandbox, 'watched')
+    const watcher = startCli(['focus', '--watch', '--interval', '0.1', '--json'], sandbox, { PWD: wt.path })
+    await watcher.waitForLine(isEvent('focused'))
+
+    const newer = await commit(wt.path, 'watched.txt')
+    const pulled = JSON.parse(await watcher.waitForLine(isEvent('pulled'))) as { to: string }
+    expect(pulled.to).toBe(newer)
+
+    watcher.signal('SIGTERM')
+    const { exitCode, stdout } = await watcher.exited
+    expect(exitCode).toBe(0)
+    expect(stdout).toContain('"event":"released"')
+    expect(await status(sandbox)).toMatchObject({ focused: false, head: newer })
+    expect((await hookLines(log)).at(-1)).toMatch(/^release /)
+  })
+
+  it('stops without releasing when another worktree takes over', async ({ sandbox }) => {
+    const log = await writeHookConfig(sandbox, 'local')
+    const first = await newWorktree(sandbox, 'watching first')
+    const second = await newWorktree(sandbox, 'takes over')
+    const watcher = startCli(['focus', '--watch', '--interval', '0.1', '--json'], sandbox, { PWD: first.path })
+    await watcher.waitForLine(isEvent('focused'))
+
+    await focused(sandbox, second.path)
+    const lost = JSON.parse(await watcher.waitForLine(isEvent('lost'))) as { owner: { worktree: string } }
+    expect(lost.owner.worktree).toBe(second.path)
+    expect((await watcher.exited).stdout).not.toContain('"event":"released"')
+
+    // One release, by the takeover; the watcher did not release the newcomer.
+    expect((await hookLines(log)).filter((line) => line.startsWith('release '))).toHaveLength(1)
+    expect((await status(sandbox)).owner?.worktree).toBe(second.path)
   })
 })

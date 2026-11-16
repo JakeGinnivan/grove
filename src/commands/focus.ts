@@ -12,6 +12,7 @@ import {
   readFocusState,
   runFocusHooks,
   writeFocusState,
+  type FocusConfig,
   type FocusOwner,
   type FocusState,
 } from '../core/focus.js'
@@ -55,11 +56,15 @@ async function headOf(path: string): Promise<string> {
   return (await git(['rev-parse', 'HEAD'], { cwd: path })).stdout
 }
 
+const DEFAULT_WATCH_SECONDS = 2
+
 interface FocusOptions {
   repo?: string
   setup?: boolean
   hooks?: boolean
   discard?: boolean
+  watch?: boolean
+  interval?: string
 }
 
 function hookOptions(options: FocusOptions) {
@@ -74,8 +79,20 @@ export function focusCommand(): Command {
     .option('--setup', 'also run focus hooks committed to the repo')
     .option('--no-hooks', 'skip the activate and release hooks')
     .option('--discard', 'discard uncommitted changes in the focus worktree first')
+    .option('--watch', 'keep pulling the worktree\'s new commits until stopped, then release')
+    .option('--interval <seconds>', `how often --watch checks for commits (default ${DEFAULT_WATCH_SECONDS})`)
     .action(async (worktree: string | undefined, options: FocusOptions) => {
       await runFocus(worktree, options)
+    })
+
+  command.command('pull')
+    .description('Move the focus worktree to its owner\'s latest commit')
+    .option('--repo <repo>', 'registered repo name')
+    .option('--setup', 'also run focus hooks committed to the repo')
+    .option('--no-hooks', 'skip the hooks')
+    .option('--discard', 'discard uncommitted changes in the focus worktree first')
+    .action(async (options: FocusOptions) => {
+      await runPull(options)
     })
 
   command.command('status')
@@ -97,9 +114,7 @@ export function focusCommand(): Command {
   return command
 }
 
-async function runFocus(worktreeArg: string | undefined, options: FocusOptions): Promise<void> {
-  const repo = await repoContext(options.repo)
-  const config = await readFocusConfig(repo.rootWorktree)
+function requireEnabled(repo: RepoContext, config: FocusConfig): void {
   // Opt-in: most repos run happily from every worktree at once, and a stray
   // `grove focus` there would leave an unexplained extra checkout behind.
   if (config.source === null) {
@@ -108,47 +123,57 @@ async function runFocus(worktreeArg: string | undefined, options: FocusOptions):
       hint: `Add "focus": {} to ${join(repo.repoPath, 'worktree.json')} to enable it.`,
     })
   }
+}
+
+interface MoveResult {
+  path: string
+  created: boolean
+  owner: FocusOwner
+  commit: string
+  previous: { owner: FocusOwner | null; commit: string } | null
+}
+
+/**
+ * Check `commit` out in the focus worktree for `owner`: release the previous
+ * owner if it is changing hands, check out, record, activate.
+ */
+async function moveFocus(
+  repo: RepoContext,
+  config: FocusConfig,
+  owner: FocusOwner,
+  commit: string,
+  options: FocusOptions,
+): Promise<MoveResult> {
   const state = await readFocusState(repo.rootWorktree)
   const focusPath = state?.path ?? join(repo.repoPath, config.dir)
-
-  const reports = await loadWorktrees(repo.rootWorktree, { status: false })
-  const focusable = reports.filter(
-    (report) => !report.isMain && !samePath(report.path, focusPath),
-  )
-  let target
-  if (worktreeArg) {
-    target = matchWorktree(focusable, worktreeArg, { partial: true })
-  } else {
-    target = repo.current
-      ? focusable.find((report) => samePath(report.path, repo.current!))
-      : undefined
-    if (!target) {
-      throw new WtError('Name the worktree to focus, or run this inside it.', {
-        code: 'focus_needs_worktree',
-        hint: focusable.length
-          ? `Worktrees: ${focusable.map((report) => report.dir).join(', ')}`
-          : 'Create one with `grove new`.',
-      })
-    }
-  }
-
-  // Only committed work can be checked out elsewhere; anything uncommitted
-  // would silently be left behind.
-  if (await isDirty(target.path)) {
-    throw new WtError(`${target.dir} has uncommitted changes.`, {
-      code: 'worktree_dirty',
-      hint: 'Commit them first; focus checks out the worktree\'s HEAD commit.',
-    })
-  }
-  const commit = await headOf(target.path)
-  const owner: FocusOwner = { worktree: target.path, branch: target.branch }
-
-  const registered = reports.some((report) => samePath(report.path, focusPath))
+  const registered = (await listWorktrees(repo.rootWorktree))
+    .some((worktree) => samePath(worktree.path, focusPath))
   if (!registered && existsSync(focusPath)) {
     throw new WtError(`${focusPath} exists but is not a worktree of this repo.`, {
       code: 'focus_path_occupied',
       hint: 'Move it aside, or choose another directory with "focus": { "dir": ... } in worktree.json.',
     })
+  }
+  const previous = registered ? state : undefined
+
+  // Commits made in the focus worktree are on no branch. Checking out another
+  // commit would leave them reachable only from the reflog, so stop and say
+  // how to bring them home.
+  if (previous) {
+    // Commits already in the incoming commit (the worktree fast-forwarded to
+    // them) are home, so only the rest count.
+    const made = await git(['rev-list', '--count', 'HEAD', `^${previous.commit}`, `^${commit}`], {
+      cwd: focusPath, allowFailure: true,
+    })
+    if (!options.discard && made.exitCode === 0 && Number(made.stdout) > 0) {
+      const head = (await headOf(focusPath)).slice(0, 12)
+      const home = previous.owner?.worktree ?? '<worktree>'
+      throw new WtError(`The focus worktree has ${made.stdout} commit(s) of its own.`, {
+        code: 'focus_has_commits',
+        hint: `Bring them to the worktree with \`git -C ${home} merge --ff-only ${head}\` and refocus. ` +
+          `If it has moved on, cherry-pick ${previous.commit.slice(0, 12)}..${head} there instead, then refocus with --discard.`,
+      })
+    }
   }
 
   const dirtyFocus = (when: string) =>
@@ -159,7 +184,6 @@ async function runFocus(worktreeArg: string | undefined, options: FocusOptions):
   if (registered && !options.discard && await isDirty(focusPath)) throw dirtyFocus('')
 
   const context = { rootWorktree: repo.rootWorktree, focusPath }
-  const previous = registered ? state : undefined
   const ownerChanged = !!previous?.owner && !samePath(previous.owner.worktree, owner.worktree)
   if (ownerChanged) {
     // The outgoing owner's code is still checked out, so its hooks can undo
@@ -192,21 +216,228 @@ async function runFocus(worktreeArg: string | undefined, options: FocusOptions):
     ...context, owner, from: previous?.commit ?? null, to: commit,
   }, hookOptions(options))
 
+  return {
+    path: focusPath,
+    created: !registered,
+    owner,
+    commit,
+    previous: previous ? { owner: previous.owner, commit: previous.commit } : null,
+  }
+}
+
+async function runFocus(worktreeArg: string | undefined, options: FocusOptions): Promise<void> {
+  const repo = await repoContext(options.repo)
+  const config = await readFocusConfig(repo.rootWorktree)
+  requireEnabled(repo, config)
+  const interval = watchInterval(options)
+  const state = await readFocusState(repo.rootWorktree)
+  const focusPath = state?.path ?? join(repo.repoPath, config.dir)
+
+  const reports = await loadWorktrees(repo.rootWorktree, { status: false })
+  const focusable = reports.filter(
+    (report) => !report.isMain && !samePath(report.path, focusPath),
+  )
+  let target
+  if (worktreeArg) {
+    target = matchWorktree(focusable, worktreeArg, { partial: true })
+  } else {
+    target = repo.current
+      ? focusable.find((report) => samePath(report.path, repo.current!))
+      : undefined
+    if (!target) {
+      throw new WtError('Name the worktree to focus, or run this inside it.', {
+        code: 'focus_needs_worktree',
+        hint: focusable.length
+          ? `Worktrees: ${focusable.map((report) => report.dir).join(', ')}`
+          : 'Create one with `grove new`.',
+      })
+    }
+  }
+
+  // Only committed work can be checked out elsewhere; anything uncommitted
+  // would silently be left behind.
+  if (await isDirty(target.path)) {
+    throw new WtError(`${target.dir} has uncommitted changes.`, {
+      code: 'worktree_dirty',
+      hint: 'Commit them first; focus checks out the worktree\'s HEAD commit.',
+    })
+  }
+  const owner: FocusOwner = { worktree: target.path, branch: target.branch }
+  const moved = await moveFocus(repo, config, owner, await headOf(target.path), options)
+
+  if (interval !== undefined) {
+    await watch(repo, config, moved, interval, options)
+    return
+  }
   if (getOutputContext().json) {
     emitJson({
       ok: true,
-      path: focusPath,
-      created: !registered,
-      worktree: target.path,
-      branch: target.branch,
-      commit,
-      previous: previous ? { owner: previous.owner, commit: previous.commit } : null,
+      path: moved.path,
+      created: moved.created,
+      worktree: owner.worktree,
+      branch: owner.branch,
+      commit: moved.commit,
+      previous: moved.previous,
     })
     return
   }
   success(
-    `Focused ${pc.cyan(target.dir)} at ${commit.slice(0, 8)} in ${pc.bold(basename(focusPath))}`,
+    `Focused ${pc.cyan(target.dir)} at ${moved.commit.slice(0, 8)} in ${pc.bold(basename(moved.path))}`,
   )
+}
+
+/** The focus worktree's current owner, which `pull` and `--watch` follow. */
+async function currentOwner(repo: RepoContext): Promise<{ state: FocusState; owner: FocusOwner }> {
+  const state = await readFocusState(repo.rootWorktree)
+  if (!state?.owner || !existsSync(state.path)) {
+    throw new WtError('Nothing is focused.', {
+      code: 'focus_not_owned',
+      hint: 'Run `grove focus` inside the worktree you want to run.',
+    })
+  }
+  if (!existsSync(state.owner.worktree)) {
+    throw new WtError(`The focused worktree ${state.owner.worktree} no longer exists.`, {
+      code: 'focus_owner_missing',
+      hint: 'Focus another worktree, or run `grove focus release`.',
+    })
+  }
+  return { state, owner: state.owner }
+}
+
+async function runPull(options: FocusOptions): Promise<void> {
+  const repo = await repoContext(options.repo)
+  const config = await readFocusConfig(repo.rootWorktree)
+  requireEnabled(repo, config)
+  const { state, owner } = await currentOwner(repo)
+
+  // Unlike the first focus, a dirty owner is fine: pull takes what is
+  // committed, which is all it ever could take.
+  const commit = await headOf(owner.worktree)
+  const updated = commit !== state.commit || await headOf(state.path) !== commit
+  if (updated) await moveFocus(repo, config, owner, commit, options)
+
+  if (getOutputContext().json) {
+    emitJson({ ok: true, updated, path: state.path, worktree: owner.worktree, from: state.commit, to: commit })
+    return
+  }
+  if (updated) success(`Pulled ${basename(owner.worktree)}: ${state.commit.slice(0, 8)} → ${commit.slice(0, 8)}`)
+  else log(`  ${pc.dim('·')} ${basename(state.path)} is already at ${basename(owner.worktree)}'s HEAD`)
+}
+
+function watchInterval(options: FocusOptions): number | undefined {
+  if (!options.watch) return undefined
+  const seconds = Number(options.interval ?? DEFAULT_WATCH_SECONDS)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new WtError('--interval takes a positive number of seconds.', { code: 'invalid_watch_interval' })
+  }
+  return seconds * 1000
+}
+
+/**
+ * One line per event. Watch never finishes with a single result, so in JSON
+ * mode each event is its own compact JSON line.
+ */
+function event(name: string, data: Record<string, unknown>, text: string): void {
+  if (getOutputContext().json) {
+    process.stdout.write(`${JSON.stringify({ event: name, ...data })}\n`)
+  } else {
+    log(`${pc.dim(new Date().toLocaleTimeString())} ${text}`)
+  }
+}
+
+/**
+ * Follow the owner's HEAD until interrupted, then release. Gives up without
+ * releasing if someone else takes the focus worktree over: it is no longer
+ * this watcher's to release.
+ */
+async function watch(
+  repo: RepoContext,
+  config: FocusConfig,
+  moved: MoveResult,
+  interval: number,
+  options: FocusOptions,
+): Promise<void> {
+  const owner = moved.owner
+  const name = basename(owner.worktree)
+  event('focused', { path: moved.path, worktree: owner.worktree, commit: moved.commit },
+    `Focused ${pc.cyan(name)} at ${moved.commit.slice(0, 8)}; watching for commits (Ctrl-C to stop and release)`)
+
+  let stopping = false
+  let wake: () => void = () => {}
+  const stop = () => {
+    // A second signal means "now": skip the release.
+    if (stopping) process.exit(130)
+    stopping = true
+    wake()
+  }
+  process.on('SIGINT', stop)
+  process.on('SIGTERM', stop)
+
+  // A commit that failed to apply is not retried until the owner moves on,
+  // so a broken hook does not rerun every interval.
+  let failed: string | undefined
+  try {
+    while (!stopping) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, interval)
+        wake = () => { clearTimeout(timer); resolve() }
+      })
+      if (stopping) break
+
+      const state = await readFocusState(repo.rootWorktree)
+      if (!state?.owner || !samePath(state.owner.worktree, owner.worktree)) {
+        event('lost', { owner: state?.owner ?? null },
+          state?.owner
+            ? pc.yellow(`${basename(state.owner.worktree)} took the focus worktree over; stopping`)
+            : pc.yellow('The focus worktree was released; stopping'))
+        return
+      }
+      if (!existsSync(owner.worktree)) {
+        event('lost', { owner: null }, pc.yellow(`${name} no longer exists; stopping`))
+        break
+      }
+
+      const head = await headOf(owner.worktree)
+      if (head === state.commit || head === failed) continue
+      try {
+        await moveFocus(repo, config, owner, head, options)
+        failed = undefined
+        event('pulled', { from: state.commit, to: head },
+          `Pulled ${state.commit.slice(0, 8)} → ${pc.green(head.slice(0, 8))}`)
+      } catch (error) {
+        failed = head
+        const err = error instanceof WtError ? error : new WtError(String(error))
+        event('error', { code: err.code, message: err.message, hint: err.hint ?? null },
+          pc.yellow(`Could not pull ${head.slice(0, 8)}: ${err.message}${err.hint ? ` ${pc.dim(err.hint)}` : ''}`))
+      }
+    }
+
+    const state = await readFocusState(repo.rootWorktree)
+    if (state?.owner && samePath(state.owner.worktree, owner.worktree)) {
+      await release(repo, config, state, options)
+      event('released', { owner, commit: state.commit },
+        `Released ${pc.cyan(name)}; ${basename(state.path)} stays at ${state.commit.slice(0, 8)}`)
+    }
+  } finally {
+    process.off('SIGINT', stop)
+    process.off('SIGTERM', stop)
+  }
+}
+
+async function release(
+  repo: RepoContext,
+  config: FocusConfig,
+  state: FocusState,
+  options: FocusOptions,
+): Promise<void> {
+  await runFocusHooks('release', config, {
+    rootWorktree: repo.rootWorktree,
+    focusPath: state.path,
+    owner: state.owner,
+    from: state.commit,
+    to: null,
+  }, hookOptions(options))
+  await writeFocusState(repo.rootWorktree, { ...state, owner: null, updatedAt: new Date().toISOString() })
 }
 
 interface FocusStatus {
@@ -286,14 +517,7 @@ async function runRelease(options: FocusOptions): Promise<void> {
     return
   }
 
-  await runFocusHooks('release', config, {
-    rootWorktree: repo.rootWorktree,
-    focusPath: state.path,
-    owner: state.owner,
-    from: state.commit,
-    to: null,
-  }, hookOptions(options))
-  await writeFocusState(repo.rootWorktree, { ...state, owner: null, updatedAt: new Date().toISOString() })
+  await release(repo, config, state, options)
 
   if (getOutputContext().json) {
     emitJson({ ok: true, released: true, owner: state.owner, path: state.path, commit: state.commit })

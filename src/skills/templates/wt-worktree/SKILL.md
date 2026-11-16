@@ -144,12 +144,17 @@ and don't enable focus yourself.
 ```bash
 grove focus status --json      # what is focused; run this before starting the app
 grove focus --json             # inside your worktree: check its HEAD out in focus/
+grove focus pull --json        # after each commit: move focus/ to your latest commit
 grove focus release --json     # hand it back when you are done
 ```
 
 - Commit before focusing: only committed work is checked out, and a worktree
-  with uncommitted changes is refused (`worktree_dirty`). After more commits,
-  run `grove focus` again to move `focus/` on.
+  with uncommitted changes is refused (`worktree_dirty`). After each further
+  commit, run `grove focus pull`; the running app picks up the new files.
+- `grove focus --watch` pulls automatically until stopped. It is for the
+  user's terminal; as an agent, use `pull`.
+- `focus_has_commits` means something was committed in `focus/`. Report it
+  with the hint's command; don't run it or `--discard` without asking.
 - If `status` shows another worktree as `owner`, someone else is testing
   there. Ask the user before taking the focus worktree over.
 - Repo hooks (`activate`, `release`) prepare `focus/` and run as part of the

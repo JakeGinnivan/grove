@@ -95,6 +95,12 @@ you only need names.
 Without the shell integration, commands print the path instead of jumping, so
 `cd "$(grove pick my-service)"` works too.
 
+## Focus: one checkout that runs the app
+
+For a repo whose app can only run once per machine, `wt focus` checks a
+worktree's commit out in a single extra worktree, `focus/`, where the app runs.
+It is opt-in per repo. See [Focus](focus.md).
+
 ## Keep main current
 
 ```bash

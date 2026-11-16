@@ -54,6 +54,7 @@ wt new my-service "fix flaky login test"       # new branch + worktree, cd'd int
 wt pick my-service                             # jump between worktrees
 wt checkout my-service colleague/their-branch  # review someone's branch
 wt sync                                        # fast-forward every main checkout
+wt focus --watch                               # run this worktree's commits in the one focus checkout
 wt cleanup my-service --merged                 # remove worktrees that have merged
 ```
 
@@ -71,8 +72,10 @@ clone? `wt import ~/src/my-service` adopts it.
   git config and rules for agents
 - [Agent support](docs/usage/agents.md) — skills, Claude Code auto mode, `--json`
   output and error codes
-- [Per-repo `worktree.json`](docs/usage/worktree-json.md) — setup commands and
-  per-worktree ports
+- [Focus](docs/usage/focus.md) — run an app that can only run once per machine
+  from one stable checkout, whichever worktree you are testing
+- [Per-repo `worktree.json`](docs/usage/worktree-json.md) — setup commands,
+  per-worktree ports and focus hooks, committed or kept locally
 - [Configuration](docs/usage/configuration.md) — `grove setup`, config keys,
   environment variables, shell integration
 

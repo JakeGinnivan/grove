@@ -5,6 +5,7 @@ import { WtError } from './errors.js'
 import { git, getConfig, listWorktrees, setConfig } from './git.js'
 import { readRegistry } from './registry.js'
 import { warn } from './output.js'
+import { configValue, readWorktreeConfig } from './worktree-config.js'
 
 const BASE_KEY = 'grove.port.base'
 const OVERFLOW_KEY = 'grove.port.lastOverflow'
@@ -60,19 +61,11 @@ function validateOutputFile(file: unknown, label: string): asserts file is strin
 
 /** Port layout is read from main so all branches share one allocation rule. */
 export async function readPortLayout(mainPath: string): Promise<PortLayout | undefined> {
-  const path = join(mainPath, 'worktree.json')
-  if (!existsSync(path)) return undefined
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-  } catch {
-    // Existing setup commands treat malformed worktree.json as optional.
-    // Preserve that behavior for repos that have not enabled ports.
-    warn(`Could not parse ${path}; skipping port configuration.`)
-    return undefined
-  }
-  if (parsed.ports === undefined) return undefined
-  const raw = parsed.ports
+  // A malformed file is warned about and treated as absent, as setup
+  // commands always have, so repos that have not enabled ports are unaffected.
+  const setting = configValue(await readWorktreeConfig(mainPath), 'ports')
+  if (!setting) return undefined
+  const raw = setting.value
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) invalid('ports must be an object')
   const value = raw as Record<string, unknown>
   if (!positiveInteger(value.perWorktree)) invalid('perWorktree must be a positive integer')

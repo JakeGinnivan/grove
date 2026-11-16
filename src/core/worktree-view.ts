@@ -14,6 +14,7 @@ import {
   behindOnMainline,
 } from './git.js'
 import { stackParentOf } from './worktree.js'
+import { readFocusState } from './focus.js'
 
 /**
  * One worktree as `list`, `pick` and `cleanup` all see it. Loading, ordering,
@@ -45,6 +46,10 @@ export interface WorktreeReport {
    */
   behindBase: number | null
   parent: string | null
+  /** The single focus worktree (`grove focus`), which cleanup never removes. */
+  isFocus: boolean
+  /** This worktree's commit is what the focus worktree has checked out. */
+  focused: boolean
 }
 
 export type SortOrder = 'recent' | 'name'
@@ -75,12 +80,13 @@ export async function loadWorktrees(
   { status }: { status: boolean },
 ): Promise<WorktreeReport[]> {
   const worktrees = await listWorktrees(gitDir)
-  const [times, base] = await Promise.all([
+  const [times, base, focus] = await Promise.all([
     commitTimes(
       gitDir,
       worktrees.flatMap((wt) => (wt.head ? [wt.head] : [])),
     ),
     status ? defaultBase(gitDir).catch(() => undefined) : undefined,
+    readFocusState(gitDir),
   ])
 
   return Promise.all(
@@ -99,6 +105,8 @@ export async function loadWorktrees(
         base: base ?? null,
         behindBase: null,
         parent: null,
+        isFocus: !!focus && samePath(focus.path, wt.path),
+        focused: !!focus?.owner && samePath(focus.owner.worktree, wt.path),
       }
       if (!status) return report
 
@@ -170,7 +178,7 @@ export function flatten({ main, groups }: Arranged): WorktreeReport[] {
 
 /** Removing it loses nothing, so cleanup preselects it. */
 export function isSafeToRemove(report: WorktreeReport): boolean {
-  return report.merged && !report.dirty
+  return report.merged && !report.dirty && !report.focused
 }
 
 type Color = Parameters<typeof styleText>[0]
@@ -185,6 +193,9 @@ function statusTags(report: WorktreeReport): { text: string; color: Color }[] {
       ? { text: '● uncommitted changes', color: 'yellow' }
       : { text: '○ clean', color: 'green' },
   ]
+  // Detached on someone else's commit: merged and pushed describe that
+  // worktree, not this one.
+  if (report.isFocus) return [...tags, { text: '◎ focus worktree', color: 'blue' }]
   if (merged) {
     tags.push({ text: report.squashMerged ? '✔ squash-merged' : '✔ merged', color: 'green' })
   }
@@ -197,6 +208,7 @@ function statusTags(report: WorktreeReport): { text: string; color: Color }[] {
   // Nothing to push when every commit is already in base.
   if (!report.upstream && !report.merged) tags.push({ text: 'not pushed', color: 'gray' })
   if (report.parent) tags.push({ text: `on ${report.parent}`, color: 'magenta' })
+  if (report.focused) tags.push({ text: '◎ focused', color: 'blue' })
   return tags
 }
 

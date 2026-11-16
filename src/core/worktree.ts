@@ -189,12 +189,7 @@ export async function createWorktree(
     : port?.warning ?? null
   if (portLayout && basePort === undefined) warn(portWarning!)
 
-  if (setup) {
-    // Setup config is read from the root worktree, not the parent directory:
-    // `worktree.json` is committed at the repo root, and the parent dir that
-    // holds the worktrees is not version controlled at all.
-    await runSetupCommands(rootWorktree, fullPath, rootWorktree)
-  }
+  await runSetupCommands(rootWorktree, fullPath, { trustRepo: setup })
 
   if (portLayout && port) await generatePortFiles(fullPath, portLayout, port)
 

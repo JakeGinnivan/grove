@@ -293,10 +293,11 @@ describe('focus in list and cleanup', () => {
 })
 
 describe('grove focus pull', () => {
-  it('moves the focus worktree to its owner\'s latest commit, from anywhere', async ({ sandbox }) => {
-    await enableFocus(sandbox)
+  it('moves the focus worktree to its owner\'s latest commit, from anywhere, running no hooks', async ({ sandbox }) => {
+    const log = await writeHookConfig(sandbox, 'local')
     const wt = await newWorktree(sandbox, 'pulled owner')
     const data = await focused(sandbox, wt.path)
+    const hooksBefore = await hookLines(log)
     const newer = await commit(wt.path, 'newer.txt')
     // A dirty owner is fine: pull only ever takes what is committed.
     await writeFile(join(wt.path, 'wip.txt'), 'wip\n')
@@ -309,6 +310,7 @@ describe('grove focus pull', () => {
 
     const again = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: sandbox.mainPath })
     expect(again.json()).toMatchObject({ updated: false })
+    expect(await hookLines(log)).toEqual(hooksBefore)
   })
 
   it('fails when nothing is focused', async ({ sandbox }) => {
@@ -356,7 +358,8 @@ describe('grove focus --watch', () => {
     expect(exitCode).toBe(0)
     expect(stdout).toContain('"event":"released"')
     expect(await status(sandbox)).toMatchObject({ focused: false, head: newer })
-    expect((await hookLines(log)).at(-1)).toMatch(/^release /)
+    // Activate once for the focus, nothing for the pull, release on stop.
+    expect((await hookLines(log)).map((line) => line.split(' ')[0])).toEqual(['activate', 'release'])
   })
 
   it('stops without releasing when another worktree takes over', async ({ sandbox }) => {

@@ -86,10 +86,8 @@ export function focusCommand(): Command {
     })
 
   command.command('pull')
-    .description('Move the focus worktree to its owner\'s latest commit')
+    .description('Move the focus worktree to its owner\'s latest commit, running no hooks')
     .option('--repo <repo>', 'registered repo name')
-    .option('--setup', 'also run focus hooks committed to the repo')
-    .option('--no-hooks', 'skip the hooks')
     .option('--discard', 'discard uncommitted changes in the focus worktree first')
     .action(async (options: FocusOptions) => {
       await runPull(options)
@@ -135,7 +133,9 @@ interface MoveResult {
 
 /**
  * Check `commit` out in the focus worktree for `owner`: release the previous
- * owner if it is changing hands, check out, record, activate.
+ * owner if it is changing hands, check out, record, then activate unless
+ * this is a pull. A pull only moves the code along under a running app, and
+ * re-running setup is what `grove focus` is for.
  */
 async function moveFocus(
   repo: RepoContext,
@@ -143,6 +143,7 @@ async function moveFocus(
   owner: FocusOwner,
   commit: string,
   options: FocusOptions,
+  { activate }: { activate: boolean },
 ): Promise<MoveResult> {
   const state = await readFocusState(repo.rootWorktree)
   const focusPath = state?.path ?? join(repo.repoPath, config.dir)
@@ -212,9 +213,11 @@ async function moveFocus(
   const next: FocusState = { path: focusPath, owner, commit, updatedAt: new Date().toISOString() }
   await writeFocusState(repo.rootWorktree, next)
 
-  await runFocusHooks('activate', config, {
-    ...context, owner, from: previous?.commit ?? null, to: commit,
-  }, hookOptions(options))
+  if (activate) {
+    await runFocusHooks('activate', config, {
+      ...context, owner, from: previous?.commit ?? null, to: commit,
+    }, hookOptions(options))
+  }
 
   return {
     path: focusPath,
@@ -263,7 +266,7 @@ async function runFocus(worktreeArg: string | undefined, options: FocusOptions):
     })
   }
   const owner: FocusOwner = { worktree: target.path, branch: target.branch }
-  const moved = await moveFocus(repo, config, owner, await headOf(target.path), options)
+  const moved = await moveFocus(repo, config, owner, await headOf(target.path), options, { activate: true })
 
   if (interval !== undefined) {
     await watch(repo, config, moved, interval, options)
@@ -314,7 +317,7 @@ async function runPull(options: FocusOptions): Promise<void> {
   // committed, which is all it ever could take.
   const commit = await headOf(owner.worktree)
   const updated = commit !== state.commit || await headOf(state.path) !== commit
-  if (updated) await moveFocus(repo, config, owner, commit, options)
+  if (updated) await moveFocus(repo, config, owner, commit, options, { activate: false })
 
   if (getOutputContext().json) {
     emitJson({ ok: true, updated, path: state.path, worktree: owner.worktree, from: state.commit, to: commit })
@@ -400,7 +403,7 @@ async function watch(
       const head = await headOf(owner.worktree)
       if (head === state.commit || head === failed) continue
       try {
-        await moveFocus(repo, config, owner, head, options)
+        await moveFocus(repo, config, owner, head, options, { activate: false })
         failed = undefined
         event('pulled', { from: state.commit, to: head },
           `Pulled ${state.commit.slice(0, 8)} → ${pc.green(head.slice(0, 8))}`)

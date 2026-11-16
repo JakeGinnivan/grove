@@ -134,8 +134,8 @@ present; `"focus": {}` enables it with no hooks.
   It must be a single directory name. It is read when the focus worktree is
   created; renaming it later does not move an existing one.
 - **`activate`** runs in the focus worktree after every `grove focus`, once the
-  new commit is checked out. Keep it to what each checkout needs (installing
-  dependencies, migrating); it runs every time.
+  new commit is checked out. `grove focus pull` and `--watch` do not run it;
+  run `grove focus` again when a commit needs setup.
 - **`release`** runs before the focus worktree changes hands, while the
   outgoing worktree's commit is still checked out, and on `grove focus release`.
   Refocusing the same worktree does not run it.

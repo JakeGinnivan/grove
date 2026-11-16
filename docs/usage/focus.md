@@ -68,10 +68,10 @@ Work flows one way: edit and commit in the worktree, then move `focus/` on.
 A running app usually picks up the changed files by itself (Rails' reloader,
 a Vite dev server), so there is nothing to restart.
 
-- **`wt focus pull`** moves `focus/` to the owner's latest commit. It works
-  from any directory in the repo, including `focus/` itself, and does nothing
-  if `focus/` is already there. Uncommitted changes in the worktree stay
-  behind, as they always would.
+- **`wt focus pull`** moves `focus/` to the owner's latest commit and runs no
+  hooks. It works from any directory in the repo, including `focus/` itself,
+  and does nothing if `focus/` is already there. Uncommitted changes in the
+  worktree stay behind, as they always would.
 - **`wt focus --watch`** focuses, then pulls each new commit as it lands
   (checking every 2 seconds; change it with `--interval`). Stop it with Ctrl-C
   and it releases the focus worktree. A second Ctrl-C exits without
@@ -79,9 +79,9 @@ a Vite dev server), so there is nothing to restart.
   stops and leaves it alone. A commit that fails to pull (a hook fails,
   `focus/` has changes) is reported and skipped until the next commit.
 
-Activate hooks run on every pull, so keep them cheap: compare
-`GROVE_FOCUS_FROM` and `GROVE_FOCUS_TO` and only install or migrate when the
-files that need it changed.
+Neither runs hooks. When a commit needs setup (new dependencies, a
+migration), run `wt focus` again from the worktree: it runs the activate
+hooks, the same as the first time.
 
 If something does get committed in `focus/`, grove will not move it and
 strand those commits on no branch. It stops with `focus_has_commits` and
@@ -113,7 +113,7 @@ sequenceDiagram
 
 `release` hooks run before the checkout changes, so they run with the outgoing
 code: that code knows how to undo what it did. Refocusing the same worktree
-runs only `activate`. `wt focus release` runs `release` and leaves `focus/`
+runs only `activate`, and pulling runs neither. `wt focus release` runs `release` and leaves `focus/`
 where it is, unowned, so the next focus does not repeat setup for nothing.
 
 See [`worktree.json`](worktree-json.md#focus) for the hook settings and the

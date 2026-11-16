@@ -1,8 +1,20 @@
 # Per-repo `worktree.json`
 
-A repo can commit a `worktree.json` at its root (the `main/` checkout, not the
-parent directory holding the worktrees) to configure what happens in each new
-worktree. `.cursor/worktrees.json` is read too.
+A repo can commit a `worktree.json` at its root (the `main/` checkout) to
+configure what happens in each new worktree. `.cursor/worktrees.json` is read
+too.
+
+## A local file, without committing anything
+
+A `worktree.json` in the directory that holds `main/` and the worktrees
+(`~/_code/my-service/worktree.json`) is read as well, so you can use these
+settings in a repo whose team does not use grove. It is never committed.
+
+The local file wins setting by setting: a `focus` there replaces the committed
+`focus`, and a committed `ports` still applies if the local file has none.
+
+You wrote the local file, so its commands run without `--setup`. Commands from
+a committed file are repository code and still need it.
 
 ## Setup commands
 
@@ -13,9 +25,9 @@ worktree. `.cursor/worktrees.json` is read too.
 ```
 
 Commands run inside the new worktree with `ROOT_WORKTREE_PATH` pointing at the
-main checkout. Because this is arbitrary repository-controlled shell code,
-grove does not run it by default. Review the file first, then opt in with
-`--setup`:
+main checkout. Because committed commands are arbitrary repository-controlled
+shell code, grove does not run them by default. Review the file first, then opt
+in with `--setup` (local commands need no opt-in):
 
 ```bash
 wt new my-service "fix login" --setup
@@ -102,3 +114,41 @@ records for worktree directories that are already missing.
 For the reasoning behind this design, see the
 [port design](../development/port-offset-plan.md) and
 [integration conventions](../development/port-conventions.md).
+
+## Focus
+
+Configure [`grove focus`](worktrees.md#focus-one-checkout-that-runs-the-app):
+
+```json
+{
+  "focus": {
+    "dir": "dev-server",
+    "activate": ["bin/setup"],
+    "release": ["../focus-release.sh"]
+  }
+}
+```
+
+- **`dir`** names the focus worktree beside `main/`; it defaults to `focus`.
+  It must be a single directory name. It is read when the focus worktree is
+  created; renaming it later does not move an existing one.
+- **`activate`** runs in the focus worktree after every `grove focus`, once the
+  new commit is checked out.
+- **`release`** runs before the focus worktree changes hands, while the
+  outgoing worktree's commit is still checked out, and on `grove focus release`.
+  Refocusing the same worktree does not run it.
+
+Hooks run in order and stop at the first failure, which fails the command. A
+failed `release` leaves the focus worktree untouched; `--no-hooks` skips the
+hooks when you need to get past a broken one. Hook output goes to stderr, so
+`--json` output stays parseable.
+
+Each hook gets:
+
+| Variable | Value |
+|---|---|
+| `ROOT_WORKTREE_PATH` | the main checkout |
+| `GROVE_FOCUS_PATH` | the focus worktree (also the working directory) |
+| `GROVE_FOCUS_WORKTREE`, `GROVE_FOCUS_BRANCH` | the incoming worktree for `activate`, the outgoing one for `release` |
+| `GROVE_FOCUS_FROM` | the commit checked out before; empty the first time |
+| `GROVE_FOCUS_TO` | the commit being checked out; empty on `grove focus release` |

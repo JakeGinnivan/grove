@@ -21,6 +21,7 @@ import { shellInitCommand } from './commands/shell-init.js'
 import { profileCommand } from './commands/profile.js'
 import { completeCommand } from './commands/complete.js'
 import { portCommand } from './commands/port.js'
+import { focusCommand } from './commands/focus.js'
 
 // package.json is the single source of truth for the version; changesets bumps
 // it and nothing else needs updating. npm always ships it next to the bundle,
@@ -47,6 +48,7 @@ function buildProgram(): Command {
   program.addCommand(syncCommand())
   program.addCommand(cleanupCommand())
   program.addCommand(portCommand())
+  program.addCommand(focusCommand())
   program.addCommand(cloneCommand())
   program.addCommand(importCommand())
   program.addCommand(createCommand())

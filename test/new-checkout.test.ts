@@ -134,13 +134,29 @@ describe('wt new', () => {
     expect(existsSync(join(data.path, 'setup-ran.txt'))).toBe(true)
   })
 
-  it('ignores a config in the worktree parent directory', async ({ sandbox }) => {
+  it('runs setup commands from the local config beside main without --setup', async ({ sandbox }) => {
+    // The local file is written by this machine's user, not committed by the
+    // repo, so it needs no opt-in.
     await writeFile(
       join(sandbox.repoPath, 'worktree.json'),
       JSON.stringify({ 'setup-worktree': ['echo hi > setup-ran.txt'] }),
     )
     const data = await newWorktree(sandbox, 'parent config')
-    expect(existsSync(join(data.path, 'setup-ran.txt'))).toBe(false)
+    expect(existsSync(join(data.path, 'setup-ran.txt'))).toBe(true)
+  })
+
+  it('lets the local config replace a committed setting', async ({ sandbox }) => {
+    await writeFile(
+      join(sandbox.mainPath, 'worktree.json'),
+      JSON.stringify({ 'setup-worktree': ['echo repo > repo-ran.txt'] }),
+    )
+    await writeFile(
+      join(sandbox.repoPath, 'worktree.json'),
+      JSON.stringify({ 'setup-worktree': ['echo local > local-ran.txt'] }),
+    )
+    const data = await newWorktree(sandbox, 'local wins', '--setup')
+    expect(existsSync(join(data.path, 'local-ran.txt'))).toBe(true)
+    expect(existsSync(join(data.path, 'repo-ran.txt'))).toBe(false)
   })
 
   it('does not run setup commands unless explicitly trusted', async ({ sandbox }) => {

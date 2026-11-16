@@ -87,6 +87,11 @@ interface RemovalOutcome {
  * `removed`: agents read that key's paths as proof of removal, and the run is
  * still `ok` when every requested worktree was skipped.
  */
+/** The focus worktree is shared by every `grove focus`, so it is never offered. */
+function removable(reports: WorktreeReport[]): WorktreeReport[] {
+  return reports.filter((report) => !report.isFocus)
+}
+
 function partitionOutcomes(outcomes: RemovalOutcome[]) {
   return {
     removed: outcomes
@@ -146,7 +151,7 @@ export async function runCleanup(
   const gitDir = await gitDirFor(repo.path)
 
   const arranged = arrange(await loadWorktrees(gitDir, { status: true }), options)
-  const candidates = flatten({ main: undefined, groups: arranged.groups })
+  const candidates = removable(flatten({ main: undefined, groups: arranged.groups }))
   const scope = { repo: repo.name }
 
   if (candidates.length === 0) {
@@ -269,7 +274,7 @@ async function runCleanupAll(config: GroveConfig, options: CleanupOptions): Prom
       try {
         const gitDir = await gitDirFor(entry.path)
         const arranged = arrange(await loadWorktrees(gitDir, { status: true }), options)
-        const reports = flatten({ main: undefined, groups: arranged.groups })
+        const reports = removable(flatten({ main: undefined, groups: arranged.groups }))
         return { name: entry.name, gitDir, reports }
       } catch (error) {
         // One broken registry entry must not block cleaning up the rest.
@@ -667,6 +672,12 @@ async function runCleanupSelf(options: CleanupOptions): Promise<void> {
   if (!report) {
     throw new WtError('Could not identify the current worktree.', {
       code: 'worktree_not_found',
+    })
+  }
+  if (report.isFocus) {
+    throw new WtError('Refusing to remove the focus worktree.', {
+      code: 'is_focus_worktree',
+      hint: 'It is reused by every `grove focus`. Remove it with `git worktree remove` if you really mean to.',
     })
   }
 

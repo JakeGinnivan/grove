@@ -95,6 +95,34 @@ you only need names.
 Without the shell integration, commands print the path instead of jumping, so
 `cd "$(grove pick my-service)"` works too.
 
+## Focus: one checkout that runs the app
+
+Some apps can only run once per machine: fixed ports, one shared database, one
+set of background workers. `focus` gives such a repo a single extra worktree,
+`<repo>/focus/`, that runs the app for whichever worktree you are testing,
+while `main/` stays a clean reference.
+
+```bash
+wt focus                      # inside a worktree: check its HEAD out in focus/
+wt focus 260810-fix-login     # or name the worktree
+wt focus status               # what is focused, and how far behind it is
+wt focus release              # run release hooks; focus/ stays where it is
+```
+
+The focus worktree is checked out at the worktree's commit, detached, never on
+its branch, so committing in the worktree cannot leave `focus/` out of step
+with its HEAD. Commit, then run `wt focus` again to move `focus/` on. Only
+committed work moves across: `focus` refuses a worktree with uncommitted
+changes, and refuses to overwrite changes in `focus/` itself unless you pass
+`--discard`.
+
+Hooks in [`worktree.json`](worktree-json.md#focus) prepare `focus/` after each
+checkout and tidy up when it changes hands, for example rolling back the
+outgoing branch's migrations while its code is still checked out.
+
+`list` tags the focus worktree and the worktree that owns it. `cleanup` never
+offers the focus worktree, even after a release.
+
 ## Keep main current
 
 ```bash

@@ -130,8 +130,33 @@ grove list <repo> --json
 ```
 
 Returns `path`, `branch`, `isMain`, `committedAt`, `dirty`, `upstream`,
-`ahead`, `merged`, and `parent` per worktree, main first and the rest newest
-commit first.
+`ahead`, `merged`, `parent`, `isFocus` and `focused` per worktree, main first
+and the rest newest commit first.
+
+## Run the app: the focus worktree
+
+Some repos can run their app only once per machine. Those use one extra
+worktree, `focus/` by default, as the single place the app runs. It holds a
+worktree's commit, detached.
+
+```bash
+grove focus status --json      # what is focused; run this before starting the app
+grove focus --json             # inside your worktree: check its HEAD out in focus/
+grove focus release --json     # hand it back when you are done
+```
+
+- Commit before focusing: only committed work is checked out, and a worktree
+  with uncommitted changes is refused (`worktree_dirty`). After more commits,
+  run `grove focus` again to move `focus/` on.
+- If `status` shows another worktree as `owner`, someone else is testing
+  there. Ask the user before taking the focus worktree over.
+- Repo hooks (`activate`, `release`) prepare `focus/` and run as part of the
+  command. A `focus_hook_failed` error names the command; report it rather
+  than passing `--no-hooks`.
+- `focus_dirty` means `focus/` has changes, usually made by the running app.
+  Don't pass `--discard` without the user's say-so.
+- Run the app, migrations and browser checks from `focus/`. Edit code only in
+  your own worktree; never edit or commit in `focus/`.
 
 ## Clean up
 
@@ -200,7 +225,8 @@ around it.
 - One task per worktree. Do not create a branch inside an existing worktree
   with `git checkout -b`; use `grove new` so the directory and branch stay
   aligned.
-- Never edit files under `main/` — it is the shared reference checkout.
+- Never edit files under `main/` — it is the shared reference checkout. The
+  same goes for the focus worktree.
 - Check `ok` in the JSON response before proceeding. On failure, `error.code`
   is stable and `error.hint` explains the fix.
 - Run `--dry-run` before any bulk cleanup, and never pass `--force` on the

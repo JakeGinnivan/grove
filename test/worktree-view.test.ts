@@ -23,6 +23,8 @@ function report(dir: string, status: Partial<WorktreeReport> = {}): WorktreeRepo
     base: 'origin/main',
     behindBase: null,
     parent: null,
+    isFocus: false,
+    focused: false,
     ...status,
   }
 }

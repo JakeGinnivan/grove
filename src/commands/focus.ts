@@ -64,6 +64,7 @@ interface FocusOptions {
   hooks?: boolean
   discard?: boolean
   watch?: boolean
+  activate?: boolean
   interval?: string
 }
 
@@ -86,8 +87,10 @@ export function focusCommand(): Command {
     })
 
   command.command('pull')
-    .description('Move the focus worktree to its owner\'s latest commit, running no hooks')
+    .description('Move the focus worktree to its owner\'s latest commit')
     .option('--repo <repo>', 'registered repo name')
+    .option('--activate', 'also run the activate hooks, even if already up to date')
+    .option('--setup', 'with --activate, also run hooks committed to the repo')
     .option('--discard', 'discard uncommitted changes in the focus worktree first')
     .action(async (options: FocusOptions) => {
       await runPull(options)
@@ -317,10 +320,20 @@ async function runPull(options: FocusOptions): Promise<void> {
   // committed, which is all it ever could take.
   const commit = await headOf(owner.worktree)
   const updated = commit !== state.commit || await headOf(state.path) !== commit
-  if (updated) await moveFocus(repo, config, owner, commit, options, { activate: false })
+  const activate = options.activate ?? false
+  if (updated) {
+    await moveFocus(repo, config, owner, commit, options, { activate })
+  } else if (activate) {
+    await runFocusHooks('activate', config, {
+      rootWorktree: repo.rootWorktree, focusPath: state.path, owner, from: commit, to: commit,
+    }, hookOptions(options))
+  }
 
   if (getOutputContext().json) {
-    emitJson({ ok: true, updated, path: state.path, worktree: owner.worktree, from: state.commit, to: commit })
+    emitJson({
+      ok: true, updated, activated: activate, path: state.path,
+      worktree: owner.worktree, from: state.commit, to: commit,
+    })
     return
   }
   if (updated) success(`Pulled ${basename(owner.worktree)}: ${state.commit.slice(0, 8)} → ${commit.slice(0, 8)}`)

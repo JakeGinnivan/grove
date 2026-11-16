@@ -152,7 +152,7 @@ grove focus release --json     # hand it back when you are done
   with uncommitted changes is refused (`worktree_dirty`). After each further
   commit, run `grove focus pull`; the running app picks up the new files.
   `pull` runs no hooks, so after a commit that adds dependencies or
-  migrations, run `grove focus` from your worktree instead.
+  migrations, run `grove focus pull --activate` instead.
 - `grove focus --watch` pulls automatically until stopped. It is for the
   user's terminal; as an agent, use `pull`.
 - `focus_has_commits` means something was committed in `focus/`. Report it

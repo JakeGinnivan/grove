@@ -135,7 +135,7 @@ present; `"focus": {}` enables it with no hooks.
   created; renaming it later does not move an existing one.
 - **`activate`** runs in the focus worktree after every `grove focus`, once the
   new commit is checked out. `grove focus pull` and `--watch` do not run it;
-  run `grove focus` again when a commit needs setup.
+  `grove focus pull --activate` does, for a commit that needs setup.
 - **`release`** runs before the focus worktree changes hands, while the
   outgoing worktree's commit is still checked out, and on `grove focus release`.
   Refocusing the same worktree does not run it.

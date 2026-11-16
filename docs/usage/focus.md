@@ -47,6 +47,7 @@ wt focus                      # inside a worktree: check its HEAD out in focus/
 wt focus 260810-fix-login     # or name the worktree
 wt focus --watch              # ...and keep following its commits until Ctrl-C
 wt focus pull                 # from anywhere: move focus/ to the owner's latest commit
+wt focus pull --activate      # ...and rerun the activate hooks (new deps, migrations)
 wt focus status               # what is focused, and how far behind it is
 wt focus release              # run release hooks; focus/ stays where it is
 ```
@@ -80,8 +81,8 @@ a Vite dev server), so there is nothing to restart.
   `focus/` has changes) is reported and skipped until the next commit.
 
 Neither runs hooks. When a commit needs setup (new dependencies, a
-migration), run `wt focus` again from the worktree: it runs the activate
-hooks, the same as the first time.
+migration), run `wt focus pull --activate`: it pulls if there is anything to
+pull, then runs the activate hooks, the same as the first `wt focus`.
 
 If something does get committed in `focus/`, grove will not move it and
 strand those commits on no branch. It stops with `focus_has_commits` and

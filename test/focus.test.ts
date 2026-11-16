@@ -313,6 +313,23 @@ describe('grove focus pull', () => {
     expect(await hookLines(log)).toEqual(hooksBefore)
   })
 
+  it('runs the activate hooks with --activate, even when already up to date', async ({ sandbox }) => {
+    const log = await writeHookConfig(sandbox, 'local')
+    const wt = await newWorktree(sandbox, 'reactivated')
+    const data = await focused(sandbox, wt.path)
+    const newer = await commit(wt.path, 'deps.txt')
+
+    const pulled = await runCli(['focus', 'pull', '--activate', '--json'], sandbox, { PWD: data.path })
+    expect(pulled.json()).toMatchObject({ updated: true, activated: true })
+    const again = await runCli(['focus', 'pull', '--activate', '--json'], sandbox, { PWD: data.path })
+    expect(again.json()).toMatchObject({ updated: false, activated: true })
+
+    expect((await hookLines(log)).slice(1)).toEqual([
+      `activate owner=${basename(wt.path)} from=${data.commit} to=${newer} cwd=focus`,
+      `activate owner=${basename(wt.path)} from=${newer} to=${newer} cwd=focus`,
+    ])
+  })
+
   it('fails when nothing is focused', async ({ sandbox }) => {
     await enableFocus(sandbox)
     const result = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: sandbox.mainPath })

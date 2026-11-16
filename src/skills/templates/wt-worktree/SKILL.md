@@ -137,7 +137,9 @@ and the rest newest commit first.
 
 Some repos can run their app only once per machine. Those use one extra
 worktree, `focus/` by default, as the single place the app runs. It holds a
-worktree's commit, detached.
+worktree's commit, detached. It is opt-in per repo: `focus_not_enabled` means
+the repo has not enabled it, so run the app however the repo's own docs say,
+and don't enable focus yourself.
 
 ```bash
 grove focus status --json      # what is focused; run this before starting the app

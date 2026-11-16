@@ -100,6 +100,14 @@ export function focusCommand(): Command {
 async function runFocus(worktreeArg: string | undefined, options: FocusOptions): Promise<void> {
   const repo = await repoContext(options.repo)
   const config = await readFocusConfig(repo.rootWorktree)
+  // Opt-in: most repos run happily from every worktree at once, and a stray
+  // `grove focus` there would leave an unexplained extra checkout behind.
+  if (config.source === null) {
+    throw new WtError('Focus is not enabled for this repo.', {
+      code: 'focus_not_enabled',
+      hint: `Add "focus": {} to ${join(repo.repoPath, 'worktree.json')} to enable it.`,
+    })
+  }
   const state = await readFocusState(repo.rootWorktree)
   const focusPath = state?.path ?? join(repo.repoPath, config.dir)
 
@@ -202,6 +210,7 @@ async function runFocus(worktreeArg: string | undefined, options: FocusOptions):
 }
 
 interface FocusStatus {
+  enabled: boolean
   focused: boolean
   path: string | null
   exists: boolean
@@ -217,11 +226,13 @@ interface FocusStatus {
 
 async function runStatus(options: FocusOptions): Promise<void> {
   const repo = await repoContext(options.repo)
+  const config = await readFocusConfig(repo.rootWorktree)
   const state = await readFocusState(repo.rootWorktree)
   const exists = !!state && existsSync(state.path)
   const ownerExists = !!state?.owner && existsSync(state.owner.worktree)
 
   const status: FocusStatus = {
+    enabled: config.source !== null,
     focused: !!state?.owner,
     path: state?.path ?? null,
     exists,
@@ -245,7 +256,9 @@ async function runStatus(options: FocusOptions): Promise<void> {
     return
   }
   if (!state || !exists) {
-    log('No focus worktree. Create one with `grove focus` inside a worktree.')
+    log(status.enabled
+      ? 'No focus worktree yet. Create one with `grove focus` inside a worktree.'
+      : 'Focus is not enabled for this repo.')
     return
   }
   log(`${pc.bold('Focus worktree')}  ${state.path}`)

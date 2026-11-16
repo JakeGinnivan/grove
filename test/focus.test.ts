@@ -62,12 +62,26 @@ async function writeHookConfig(sandbox: Sandbox, where: 'local' | 'repo', extra 
   return log
 }
 
+/** Focus is opt-in; tests that do not write their own config enable it bare. */
+async function enableFocus(sandbox: Sandbox) {
+  await writeFile(join(sandbox.repoPath, 'worktree.json'), JSON.stringify({ focus: {} }))
+}
+
 async function hookLines(log: string): Promise<string[]> {
   return existsSync(log) ? (await readFile(log, 'utf8')).trim().split('\n') : []
 }
 
 describe('grove focus', () => {
+  it('is off until the repo enables it', async ({ sandbox }) => {
+    const wt = await newWorktree(sandbox, 'not enabled')
+    const error = expectError(await focus(sandbox, wt.path), 'focus_not_enabled')
+    expect(error.hint).toContain(join(sandbox.repoPath, 'worktree.json'))
+    expect(existsSync(join(sandbox.repoPath, 'focus'))).toBe(false)
+    expect(await status(sandbox)).toMatchObject({ enabled: false, focused: false })
+  })
+
   it('checks the current worktree\'s commit out, detached, in <repo>/focus', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     const wt = await newWorktree(sandbox, 'feature one')
     const head = await commit(wt.path, 'one.txt')
 
@@ -85,12 +99,14 @@ describe('grove focus', () => {
   })
 
   it('focuses a named worktree from anywhere in the repo', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     const wt = await newWorktree(sandbox, 'named target')
     const data = await focused(sandbox, sandbox.mainPath, 'named-target')
     expect(data.worktree).toBe(wt.path)
   })
 
   it('reports how far the focus worktree is behind, and moves it on refocus', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     const wt = await newWorktree(sandbox, 'moving')
     await focused(sandbox, wt.path)
     const newer = await commit(wt.path, 'later.txt')
@@ -102,6 +118,7 @@ describe('grove focus', () => {
   })
 
   it('refuses a worktree with uncommitted changes', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     const wt = await newWorktree(sandbox, 'dirty one')
     await writeFile(join(wt.path, 'wip.txt'), 'wip\n')
     expectError(await focus(sandbox, wt.path), 'worktree_dirty')
@@ -109,11 +126,13 @@ describe('grove focus', () => {
   })
 
   it('refuses when run from main without naming a worktree', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     await newWorktree(sandbox, 'some work')
     expectError(await focus(sandbox, sandbox.mainPath), 'focus_needs_worktree')
   })
 
   it('protects uncommitted changes in the focus worktree unless told to discard them', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     const wt = await newWorktree(sandbox, 'protect')
     const data = await focused(sandbox, wt.path)
     await commit(wt.path, 'next.txt')
@@ -243,6 +262,7 @@ describe('grove focus release', () => {
   })
 
   it('is a no-op when nothing is focused', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     const result = await runCli(['focus', 'release', '--json'], sandbox, { PWD: sandbox.mainPath })
     expect(result.exitCode).toBe(0)
     expect(result.json()).toMatchObject({ released: false })
@@ -251,6 +271,7 @@ describe('grove focus release', () => {
 
 describe('focus in list and cleanup', () => {
   it('marks the focus worktree and its owner, and never offers the focus worktree for removal', async ({ sandbox }) => {
+    await enableFocus(sandbox)
     const wt = await newWorktree(sandbox, 'listed owner')
     const data = await focused(sandbox, wt.path)
 

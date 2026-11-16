@@ -67,11 +67,13 @@ clone? `wt import ~/src/my-service` adopts it.
 
 - [Repositories](docs/usage/repos.md) — clone, import or create repos, aliases
 - [Worktrees](docs/usage/worktrees.md) — start tasks, ticket keys, check out
-  branches, stack work, move around, focus, sync, clean up
+  branches, stack work, move around, sync, clean up
 - [Profiles](docs/usage/profiles.md) — group repos by directory with per-profile
   git config and rules for agents
 - [Agent support](docs/usage/agents.md) — skills, Claude Code auto mode, `--json`
   output and error codes
+- [Focus](docs/usage/focus.md) — run an app that can only run once per machine
+  from one stable checkout, whichever worktree you are testing
 - [Per-repo `worktree.json`](docs/usage/worktree-json.md) — setup commands,
   per-worktree ports and focus hooks, committed or kept locally
 - [Configuration](docs/usage/configuration.md) — `grove setup`, config keys,

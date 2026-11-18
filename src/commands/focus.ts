@@ -8,8 +8,10 @@ import { git, isDirty, listWorktrees } from '../core/git.js'
 import { samePath } from '../core/paths.js'
 import { loadWorktrees, matchWorktree } from '../core/worktree-view.js'
 import {
+  hasFocusChanges,
   readFocusConfig,
   readFocusState,
+  resetRegenerated,
   runFocusHooks,
   writeFocusState,
   type FocusConfig,
@@ -188,7 +190,7 @@ async function moveFocus(
       code: 'focus_dirty',
       hint: `Inspect them with \`git -C ${focusPath} status\`, or pass --discard to throw them away.`,
     })
-  if (registered && !options.discard && await isDirty(focusPath)) throw dirtyFocus('')
+  if (registered && !options.discard && await hasFocusChanges(focusPath, config)) throw dirtyFocus('')
 
   const context = { rootWorktree: repo.rootWorktree, focusPath }
   const ownerChanged = !!previous?.owner && !samePath(previous.owner.worktree, owner.worktree)
@@ -202,12 +204,13 @@ async function moveFocus(
 
   // Checked again after the release hooks, which can leave changes of their
   // own; a checkout would otherwise carry them onto the next commit.
-  if (registered && await isDirty(focusPath)) {
+  if (registered && await hasFocusChanges(focusPath, config)) {
     if (!options.discard) throw dirtyFocus(' after the release hooks')
     await git(['reset', '--hard', '--quiet'], { cwd: focusPath })
   }
 
   if (registered) {
+    await resetRegenerated(focusPath, config)
     await git(['checkout', '--detach', '--quiet', commit], { cwd: focusPath })
   } else {
     info(`Creating focus worktree at ${focusPath}...`)
@@ -491,7 +494,7 @@ async function runStatus(options: FocusOptions): Promise<void> {
     commit: state?.commit ?? null,
     head: exists ? await headOf(state!.path) : null,
     behind: null,
-    dirty: exists ? await isDirty(state!.path) : false,
+    dirty: exists ? await hasFocusChanges(state!.path, config) : false,
   }
   if (state?.owner && ownerExists) {
     const count = await git(

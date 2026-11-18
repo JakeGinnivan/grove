@@ -33,6 +33,8 @@ export interface FocusConfig {
   dir: string
   activate: string[]
   release: string[]
+  /** Git glob pathspecs for files the running app rewrites, such as a schema dump. */
+  regenerated: string[]
   source: ConfigSource | null
 }
 
@@ -40,23 +42,23 @@ function invalid(message: string): never {
   throw new WtError(`Invalid focus configuration: ${message}`, { code: 'invalid_focus_config' })
 }
 
-function commandList(value: unknown, key: string): string[] {
+function stringList(value: unknown, key: string, items: string): string[] {
   if (value === undefined) return []
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
-    invalid(`${key} must be an array of commands`)
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item !== '')) {
+    invalid(`${key} must be an array of ${items}`)
   }
   return value as string[]
 }
 
 export async function readFocusConfig(rootWorktree: string): Promise<FocusConfig> {
   const setting = configValue(await readWorktreeConfig(rootWorktree), 'focus')
-  if (!setting) return { dir: DEFAULT_DIR, activate: [], release: [], source: null }
+  if (!setting) return { dir: DEFAULT_DIR, activate: [], release: [], regenerated: [], source: null }
 
   const raw = setting.value
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) invalid('focus must be an object')
   const value = raw as Record<string, unknown>
   for (const key of Object.keys(value)) {
-    if (key !== 'dir' && key !== 'activate' && key !== 'release') {
+    if (key !== 'dir' && key !== 'activate' && key !== 'release' && key !== 'regenerated') {
       invalid(`focus.${key} is not supported`)
     }
   }
@@ -69,10 +71,37 @@ export async function readFocusConfig(rootWorktree: string): Promise<FocusConfig
   }
   return {
     dir,
-    activate: commandList(value.activate, 'focus.activate'),
-    release: commandList(value.release, 'focus.release'),
+    activate: stringList(value.activate, 'focus.activate', 'commands'),
+    release: stringList(value.release, 'focus.release', 'commands'),
+    regenerated: stringList(value.regenerated, 'focus.regenerated', 'paths'),
     source: setting.source,
   }
+}
+
+/**
+ * Whether the focus worktree has changes worth protecting: anything except
+ * the files listed in `regenerated`, which the app rewrites as it runs.
+ */
+export async function hasFocusChanges(focusPath: string, config: FocusConfig): Promise<boolean> {
+  const excluded = config.regenerated.map((path) => `:(exclude,glob)${path}`)
+  const { stdout } = await git(['status', '--porcelain', '--', '.', ...excluded], { cwd: focusPath })
+  return stdout.length > 0
+}
+
+/**
+ * Put the `regenerated` files back as committed, so a checkout neither
+ * refuses to overwrite them nor carries them onto the next commit.
+ */
+export async function resetRegenerated(focusPath: string, config: FocusConfig): Promise<void> {
+  if (config.regenerated.length === 0) return
+  const included = config.regenerated.map((path) => `:(glob)${path}`)
+  const paths = async (args: string[]) =>
+    (await git([...args, '-z', '--', ...included], { cwd: focusPath })).stdout.split('\0').filter(Boolean)
+  // Only files HEAD has can be checked out from it; one the app created is removed.
+  const tracked = await paths(['diff', '--name-only', '--diff-filter=MDT', 'HEAD'])
+  const untracked = await paths(['ls-files', '--others', '--exclude-standard'])
+  if (tracked.length > 0) await git(['checkout', 'HEAD', '--', ...tracked], { cwd: focusPath })
+  if (untracked.length > 0) await git(['clean', '-fq', '--', ...untracked], { cwd: focusPath })
 }
 
 async function statePath(gitDir: string): Promise<string> {

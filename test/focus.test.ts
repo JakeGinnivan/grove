@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest'
 import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { runCli, startCli, gitIn, type Sandbox } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
@@ -45,6 +45,12 @@ async function commit(path: string, file: string): Promise<string> {
   await writeFile(join(path, file), `${file}\n`)
   await gitIn(['add', '.'], path)
   await gitIn(['commit', '-m', `add ${file}`], path)
+  return gitIn(['rev-parse', 'HEAD'], path)
+}
+
+async function commitAll(path: string, message: string): Promise<string> {
+  await gitIn(['add', '.'], path)
+  await gitIn(['commit', '-m', message], path)
   return gitIn(['rev-parse', 'HEAD'], path)
 }
 
@@ -177,6 +183,15 @@ describe('grove focus', () => {
       JSON.stringify({ focus: { dir: '../elsewhere' } }),
     )
     const wt = await newWorktree(sandbox, 'bad dir')
+    expectError(await focus(sandbox, wt.path), 'invalid_focus_config')
+  })
+
+  it('rejects focus.regenerated that is not a list of paths', async ({ sandbox }) => {
+    await writeFile(
+      join(sandbox.repoPath, 'worktree.json'),
+      JSON.stringify({ focus: { regenerated: 'db/structure.sql' } }),
+    )
+    const wt = await newWorktree(sandbox, 'bad regenerated')
     expectError(await focus(sandbox, wt.path), 'invalid_focus_config')
   })
 
@@ -342,6 +357,37 @@ describe('grove focus pull', () => {
     expect(pull.exitCode, pull.stdout || pull.stderr).toBe(0)
     expect(pull.json()).toMatchObject({ updated: true, to: newer })
     expect((await status(sandbox)).dirty).toBe(false)
+  })
+
+  it('resets regenerated files instead of treating them as uncommitted work', async ({ sandbox }) => {
+    await writeFile(join(sandbox.repoPath, 'worktree.json'), JSON.stringify({ focus: { regenerated: ['db/*.sql'] } }))
+    const wt = await newWorktree(sandbox, 'regenerated config')
+    await mkdir(join(wt.path, 'db'))
+    await writeFile(join(wt.path, 'db', 'schema.sql'), 'committed\n')
+    await commitAll(wt.path, 'add schema')
+    const data = await focused(sandbox, wt.path)
+
+    await writeFile(join(data.path, 'db', 'schema.sql'), 'dumped by the app\n')
+    expect((await status(sandbox)).dirty).toBe(false)
+
+    // The incoming commit changes the same file, which a plain checkout refuses.
+    await writeFile(join(wt.path, 'db', 'schema.sql'), 'migrated\n')
+    const newer = await commitAll(wt.path, 'migrate schema')
+    const pull = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: data.path })
+    expect(pull.exitCode, pull.stdout || pull.stderr).toBe(0)
+    expect(pull.json()).toMatchObject({ updated: true, to: newer })
+    expect(await readFile(join(data.path, 'db', 'schema.sql'), 'utf8')).toBe('migrated\n')
+  })
+
+  it('still protects changes outside the regenerated paths', async ({ sandbox }) => {
+    await writeFile(join(sandbox.repoPath, 'worktree.json'), JSON.stringify({ focus: { regenerated: ['db/*.sql'] } }))
+    const wt = await newWorktree(sandbox, 'regenerated guard')
+    const data = await focused(sandbox, wt.path)
+    await commit(wt.path, 'next.txt')
+    await writeFile(join(data.path, 'README.md'), 'edited by hand\n')
+
+    expect((await status(sandbox)).dirty).toBe(true)
+    expectError(await runCli(['focus', 'pull', '--json'], sandbox, { PWD: data.path }), 'focus_dirty')
   })
 
   it('fails when nothing is focused', async ({ sandbox }) => {

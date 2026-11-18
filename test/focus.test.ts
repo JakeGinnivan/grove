@@ -330,6 +330,20 @@ describe('grove focus pull', () => {
     ])
   })
 
+  it('discards files the app regenerated in the focus worktree only with --discard', async ({ sandbox }) => {
+    await enableFocus(sandbox)
+    const wt = await newWorktree(sandbox, 'regenerated')
+    const data = await focused(sandbox, wt.path)
+    const newer = await commit(wt.path, 'schema.txt')
+    await writeFile(join(data.path, 'README.md'), 'dumped by the app\n')
+
+    expectError(await runCli(['focus', 'pull', '--json'], sandbox, { PWD: data.path }), 'focus_dirty')
+    const pull = await runCli(['focus', 'pull', '--discard', '--json'], sandbox, { PWD: data.path })
+    expect(pull.exitCode, pull.stdout || pull.stderr).toBe(0)
+    expect(pull.json()).toMatchObject({ updated: true, to: newer })
+    expect((await status(sandbox)).dirty).toBe(false)
+  })
+
   it('fails when nothing is focused', async ({ sandbox }) => {
     await enableFocus(sandbox)
     const result = await runCli(['focus', 'pull', '--json'], sandbox, { PWD: sandbox.mainPath })

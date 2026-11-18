@@ -75,6 +75,9 @@ function hookOptions(options: FocusOptions) {
 export function focusCommand(): Command {
   const command = new Command('focus')
     .description('Check a worktree\'s commit out in the single focus worktree')
+    // focus and its subcommands share option names (--discard, --repo,
+    // --setup); this hands options after `pull` to pull, not to focus.
+    .enablePositionalOptions()
     .argument('[worktree]', 'worktree to focus (default: the current one)')
     .option('--repo <repo>', 'registered repo name (default: the current directory\'s repo)')
     .option('--setup', 'also run focus hooks committed to the repo')

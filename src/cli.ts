@@ -39,6 +39,11 @@ function buildProgram(): Command {
     // so they can appear after the subcommand too.
     .option('--json', 'emit machine-readable JSON (implies --no-interactive)')
     .option('--no-interactive', 'never prompt; fail if input is missing')
+    // Lets a subcommand enable positional options for its own subcommands:
+    // commander only honours that when every ancestor enables it too. The
+    // global options above are stripped from argv first, so they still work
+    // after the subcommand.
+    .enablePositionalOptions()
     .showHelpAfterError()
 
   program.addCommand(newCommand())

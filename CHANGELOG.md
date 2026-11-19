@@ -1,5 +1,15 @@
 # @jakeginnivan/grove
 
+## 0.14.0
+
+### Minor Changes
+
+- b6c1280: Add `focus.generated` to `worktree.json`: glob paths for files the running app rewrites, such as a schema dump. Changes to them no longer make the focus worktree dirty, and grove puts them back as committed before each checkout, so they cannot block `grove focus` or `grove focus pull`.
+
+### Patch Changes
+
+- 891c3b7: `grove focus pull` now receives its `--discard`, `--repo` and `--setup` options. `grove focus` defines the same options and took them first, so `grove focus pull --discard` still failed with `focus_dirty`.
+
 ## 0.13.1
 
 ### Patch Changes

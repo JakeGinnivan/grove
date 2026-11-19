@@ -63,7 +63,7 @@ Only committed work moves across. `focus` refuses a worktree with uncommitted
 changes, and refuses to overwrite changes in `focus/` itself (often files the
 app regenerated) unless you pass `--discard`.
 Files the app rewrites every time it runs, such as a schema dump, can be
-listed in [`regenerated`](worktree-json.md#focus): grove then ignores
+listed in [`generated`](worktree-json.md#focus): grove then ignores
 their changes and resets them before each checkout, so they never block a move.
 
 ## Keeping it up to date

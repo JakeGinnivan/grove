@@ -11,7 +11,7 @@ import {
   hasFocusChanges,
   readFocusConfig,
   readFocusState,
-  resetRegenerated,
+  resetGenerated,
   runFocusHooks,
   writeFocusState,
   type FocusConfig,
@@ -210,7 +210,7 @@ async function moveFocus(
   }
 
   if (registered) {
-    await resetRegenerated(focusPath, config)
+    await resetGenerated(focusPath, config)
     await git(['checkout', '--detach', '--quiet', commit], { cwd: focusPath })
   } else {
     info(`Creating focus worktree at ${focusPath}...`)

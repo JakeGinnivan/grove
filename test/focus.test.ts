@@ -186,12 +186,12 @@ describe('grove focus', () => {
     expectError(await focus(sandbox, wt.path), 'invalid_focus_config')
   })
 
-  it('rejects focus.regenerated that is not a list of paths', async ({ sandbox }) => {
+  it('rejects focus.generated that is not a list of paths', async ({ sandbox }) => {
     await writeFile(
       join(sandbox.repoPath, 'worktree.json'),
-      JSON.stringify({ focus: { regenerated: 'db/structure.sql' } }),
+      JSON.stringify({ focus: { generated: 'db/structure.sql' } }),
     )
-    const wt = await newWorktree(sandbox, 'bad regenerated')
+    const wt = await newWorktree(sandbox, 'bad generated')
     expectError(await focus(sandbox, wt.path), 'invalid_focus_config')
   })
 
@@ -359,9 +359,9 @@ describe('grove focus pull', () => {
     expect((await status(sandbox)).dirty).toBe(false)
   })
 
-  it('resets regenerated files instead of treating them as uncommitted work', async ({ sandbox }) => {
-    await writeFile(join(sandbox.repoPath, 'worktree.json'), JSON.stringify({ focus: { regenerated: ['db/*.sql'] } }))
-    const wt = await newWorktree(sandbox, 'regenerated config')
+  it('resets generated files instead of treating them as uncommitted work', async ({ sandbox }) => {
+    await writeFile(join(sandbox.repoPath, 'worktree.json'), JSON.stringify({ focus: { generated: ['db/*.sql'] } }))
+    const wt = await newWorktree(sandbox, 'generated config')
     await mkdir(join(wt.path, 'db'))
     await writeFile(join(wt.path, 'db', 'schema.sql'), 'committed\n')
     await commitAll(wt.path, 'add schema')
@@ -379,9 +379,9 @@ describe('grove focus pull', () => {
     expect(await readFile(join(data.path, 'db', 'schema.sql'), 'utf8')).toBe('migrated\n')
   })
 
-  it('still protects changes outside the regenerated paths', async ({ sandbox }) => {
-    await writeFile(join(sandbox.repoPath, 'worktree.json'), JSON.stringify({ focus: { regenerated: ['db/*.sql'] } }))
-    const wt = await newWorktree(sandbox, 'regenerated guard')
+  it('still protects changes outside the generated paths', async ({ sandbox }) => {
+    await writeFile(join(sandbox.repoPath, 'worktree.json'), JSON.stringify({ focus: { generated: ['db/*.sql'] } }))
+    const wt = await newWorktree(sandbox, 'generated guard')
     const data = await focused(sandbox, wt.path)
     await commit(wt.path, 'next.txt')
     await writeFile(join(data.path, 'README.md'), 'edited by hand\n')

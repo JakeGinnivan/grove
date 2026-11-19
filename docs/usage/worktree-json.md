@@ -126,7 +126,7 @@ present; `"focus": {}` enables it with no hooks.
     "dir": "dev-server",
     "activate": ["bin/setup"],
     "release": ["../focus-release.sh"],
-    "regenerated": ["db/*structure.sql"]
+    "generated": ["db/*structure.sql"]
   }
 }
 ```
@@ -140,7 +140,7 @@ present; `"focus": {}` enables it with no hooks.
 - **`release`** runs before the focus worktree changes hands, while the
   outgoing worktree's commit is still checked out, and on `grove focus release`.
   Refocusing the same worktree does not run it.
-- **`regenerated`** lists files the running app rewrites, such as a schema
+- **`generated`** lists files the running app rewrites, such as a schema
   dump, as git glob pathspecs relative to the repo root (`*` stays within one
   directory; `**` crosses them). Changes to them do not make the focus
   worktree dirty, and grove puts them back as committed before every checkout,

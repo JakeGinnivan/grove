@@ -1,13 +1,16 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { Command } from 'commander'
 import pc from 'picocolors'
-import { emitJson, getOutputContext, info, log, success } from '../core/output.js'
+import { emitJson, getOutputContext, info, log, success, warn } from '../core/output.js'
 import { WtError } from '../core/errors.js'
 import { fetchLatestVersion, isNewer, locateInstall, UPGRADE_HINT } from '../core/upgrade.js'
 import { hasInstalledSkills } from './skills.js'
+
+const execFileAsync = promisify(execFile)
 
 export function upgradeCommand(currentVersion: string): Command {
   return new Command('upgrade')
@@ -60,13 +63,25 @@ export function upgradeCommand(currentVersion: string): Command {
         })
       }
 
+      // A package manager can exit 0 without moving: mise holds back releases
+      // younger than its minimum_release_age, and keeps to a pinned version.
+      // Only the grove that new shells will run can say whether it worked.
+      const installed = await versionOnPath()
+      const upgraded = installed !== null && !isNewer(latest, installed)
       if (json) {
-        emitJson({ ok: true, ...result, upgraded: true })
+        emitJson({ ok: true, ...result, installed, upgraded })
         return
       }
-      success(`Upgraded grove to ${latest}.`)
-      if (install.method === 'mise') {
-        info('mise keeps to the version your mise config asks for. If grove is pinned there, change the pin to move past it.')
+      if (upgraded) {
+        success(`Upgraded grove to ${installed}.`)
+      } else if (installed === null) {
+        warn(`${install.method} finished, but there is no grove on PATH to confirm the upgrade with.`)
+      } else {
+        warn(`${install.method} finished, but grove on PATH is still ${installed}.`)
+        if (install.method === 'mise') {
+          info('mise skips releases younger than its minimum_release_age setting, and keeps to the version your mise config pins. Its output above says which.')
+        }
+        return
       }
       // This process is still the old grove carrying the old skills, so it
       // can't tell whether the new release changed them.
@@ -74,6 +89,19 @@ export function upgradeCommand(currentVersion: string): Command {
         info('Run `grove skills install` to bring your agents\' skills up to date.')
       }
     })
+}
+
+/** What `grove --version` prints for the grove on PATH, or null if there is none. */
+async function versionOnPath(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('grove', ['--version'], {
+      shell: process.platform === 'win32',
+      timeout: 15_000,
+    })
+    return stdout.trim() || null
+  } catch {
+    return null
+  }
 }
 
 /**

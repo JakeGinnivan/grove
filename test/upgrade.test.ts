@@ -134,34 +134,53 @@ describe('grove upgrade', () => {
     expect(error.hint).toContain('npm install --global')
   })
 
-  // A fake npm prefix holding a copy of the build, and a fake npm that records
-  // how it was called. The fake is a shell script, so this is POSIX only.
-  it.skipIf(process.platform === 'win32')('runs npm against the prefix grove was installed into', async ({ sandbox }) => {
-    latest = '999.0.0'
-    const prefix = join(sandbox.root, 'npm-prefix')
+  /**
+   * Run grove from a fake npm prefix holding a copy of the build, with a fake
+   * npm that records how it was called, and a fake grove on PATH standing in
+   * for whatever the upgrade left there. The fakes are shell scripts, so these
+   * tests are POSIX only.
+   */
+  async function upgradeFromNpmPrefix(root: string, versionAfter: string) {
+    const prefix = join(root, 'npm-prefix')
     const pkg = join(prefix, 'lib/node_modules', PACKAGE_NAME)
     await mkdir(pkg, { recursive: true })
     await cp(join(projectRoot, 'dist'), join(pkg, 'dist'), { recursive: true })
     await cp(join(projectRoot, 'package.json'), join(pkg, 'package.json'))
     await symlink(join(projectRoot, 'node_modules'), join(pkg, 'node_modules'))
 
-    const bin = join(sandbox.root, 'fake-bin')
-    const record = join(sandbox.root, 'npm-args')
+    const bin = join(root, 'fake-bin')
+    const record = join(root, 'npm-args')
     await mkdir(bin)
     await writeFile(join(bin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\necho installed-by-fake-npm\n`)
+    await writeFile(join(bin, 'grove'), `#!/bin/sh\necho ${versionAfter}\n`)
     await chmod(join(bin, 'npm'), 0o755)
+    await chmod(join(bin, 'grove'), 0o755)
 
     const { stdout } = await execFileAsync(process.execPath, [join(pkg, 'dist/cli.mjs'), 'upgrade', '--json'], {
       env: {
         ...process.env,
-        HOME: sandbox.root,
-        USERPROFILE: sandbox.root,
+        HOME: root,
+        USERPROFILE: root,
         PATH: `${bin}:${process.env['PATH'] ?? ''}`,
         npm_config_registry: registry,
       },
     })
-    expect(JSON.parse(stdout)).toMatchObject({ ok: true, method: 'npm', latest: '999.0.0', upgraded: true })
+    return { result: JSON.parse(stdout) as unknown, prefix: realpathSync(prefix), record }
+  }
+
+  it.skipIf(process.platform === 'win32')('runs npm against the prefix grove was installed into', async ({ sandbox }) => {
+    latest = '999.0.0'
+    const { result, prefix, record } = await upgradeFromNpmPrefix(sandbox.root, '999.0.0')
+    expect(result).toMatchObject({ ok: true, method: 'npm', latest: '999.0.0', installed: '999.0.0', upgraded: true })
     expect((await readFile(record, 'utf8')).trim().split('\n'))
-      .toEqual(['install', '--global', '--prefix', realpathSync(prefix), `${PACKAGE_NAME}@latest`])
+      .toEqual(['install', '--global', '--prefix', prefix, `${PACKAGE_NAME}@latest`])
+  })
+
+  // mise exits 0 without upgrading while a release is younger than its
+  // minimum_release_age, so a clean exit alone proves nothing.
+  it.skipIf(process.platform === 'win32')('does not claim an upgrade the package manager did not make', async ({ sandbox }) => {
+    latest = '999.0.0'
+    const { result } = await upgradeFromNpmPrefix(sandbox.root, VERSION)
+    expect(result).toMatchObject({ ok: true, latest: '999.0.0', installed: VERSION, upgraded: false })
   })
 })

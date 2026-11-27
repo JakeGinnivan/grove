@@ -120,8 +120,13 @@ that tool:
 | mise | `mise upgrade npm:@jakeginnivan/grove` |
 
 npm gets the prefix grove is in, so a version manager that picks node per
-directory can't send the upgrade to a different node. mise stays within the
-version your mise config asks for, so a pinned grove stays pinned.
+directory can't send the upgrade to a different node.
+
+Afterwards grove runs `grove --version` on `PATH`, and reports an upgrade only
+if that grove is now the latest. A package manager can finish cleanly without
+upgrading: mise keeps to a version your mise config pins, and skips releases
+younger than its `minimum_release_age`. In that case grove warns, and
+`--json` reports `upgraded: false` with the version it found as `installed`.
 
 A grove run from a checkout, through npx, or as a project dependency is not
 a global install. `grove upgrade` stops with the commands above rather than

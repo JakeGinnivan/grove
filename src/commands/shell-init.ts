@@ -1,4 +1,5 @@
 import { Command } from 'commander'
+import { realpathSync } from 'node:fs'
 import { tildify } from '../core/config.js'
 import { CD_SENTINEL, emitJson, getOutputContext, info, log, success } from '../core/output.js'
 import {
@@ -58,17 +59,30 @@ function reloadCommand(shell: Shell, rcFile: string): string {
 }
 
 function scriptFor(shell: Shell, options: InitOptions): string {
+  const launcher = currentLauncher()
   switch (shell) {
     case 'zsh':
-      return [zshFunction(options.name), options.completions ? zshCompletions(options.name) : '']
+      return [
+        posixLauncher(launcher, options.name),
+        zshFunction(options.name),
+        options.completions ? zshCompletions(options.name) : '',
+      ]
         .filter(Boolean)
         .join('\n\n')
     case 'bash':
-      return [bashFunction(options.name), options.completions ? bashCompletions(options.name) : '']
+      return [
+        posixLauncher(launcher, options.name),
+        bashFunction(options.name),
+        options.completions ? bashCompletions(options.name) : '',
+      ]
         .filter(Boolean)
         .join('\n\n')
     case 'fish':
-      return [fishFunction(options.name), options.completions ? fishCompletions(options.name) : '']
+      return [
+        fishLauncher(launcher, options.name),
+        fishFunction(options.name),
+        options.completions ? fishCompletions(options.name) : '',
+      ]
         .filter(Boolean)
         .join('\n\n')
     case 'powershell':
@@ -79,6 +93,83 @@ function scriptFor(shell: Shell, options: InitOptions): string {
         .filter(Boolean)
         .join('\n\n')
   }
+}
+
+interface Launcher {
+  node: string
+  cli: string
+}
+
+/**
+ * The node binary and CLI script running `shell-init` right now.
+ *
+ * Resolving `grove` through PATH reaches node through whatever the current
+ * directory's version manager says. A mise or asdf shim reads the repo's tool
+ * config before it starts node, so grove fails in any repo whose config is
+ * untrusted, broken, or names a node that isn't installed. Calling these
+ * absolute paths keeps grove independent of the directory it runs in.
+ */
+function currentLauncher(): Launcher | null {
+  const script = process.argv[1]
+  if (!script) return null
+  try {
+    const cli = realpathSync(script)
+    // Under a test runner or a TypeScript loader argv[1] is not grove itself.
+    if (!/\.m?js$/.test(cli)) return null
+    return { node: process.execPath, cli }
+  } catch {
+    return null
+  }
+}
+
+function posixQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function fishQuote(value: string): string {
+  return `'${value.replace(/[\\']/g, '\\$&')}'`
+}
+
+/**
+ * `__grove` runs the pinned node and script, falling back to `grove` on PATH
+ * once either is gone, such as after the node version is uninstalled or grove
+ * is upgraded. A new shell picks up the new paths.
+ */
+function posixLauncher(launcher: Launcher | null, name: string): string {
+  const groveFunction = name === 'grove' ? '' : `\n\ngrove() {\n  __grove "$@"\n}`
+  if (!launcher) {
+    return `# grove launcher\n__grove() {\n  command grove "$@"\n}${groveFunction}`
+  }
+  return `# grove launcher: the node and script grove was installed with, so the
+# current directory's version manager config cannot break it.
+__grove_node=${posixQuote(launcher.node)}
+__grove_cli=${posixQuote(launcher.cli)}
+__grove() {
+  if [[ -x "$__grove_node" && -f "$__grove_cli" ]]; then
+    "$__grove_node" "$__grove_cli" "$@"
+  else
+    command grove "$@"
+  fi
+}${groveFunction}`
+}
+
+function fishLauncher(launcher: Launcher | null, name: string): string {
+  const groveFunction =
+    name === 'grove' ? '' : `\n\nfunction grove --wraps __grove\n    __grove $argv\nend`
+  if (!launcher) {
+    return `# grove launcher\nfunction __grove\n    command grove $argv\nend${groveFunction}`
+  }
+  return `# grove launcher: the node and script grove was installed with, so the
+# current directory's version manager config cannot break it.
+set -g __grove_node ${fishQuote(launcher.node)}
+set -g __grove_cli ${fishQuote(launcher.cli)}
+function __grove
+    if test -x "$__grove_node"; and test -f "$__grove_cli"
+        $__grove_node $__grove_cli $argv
+    else
+        command grove $argv
+    end
+end${groveFunction}`
 }
 
 /** Commands offered at the top level, with descriptions for the picker. */
@@ -123,7 +214,7 @@ function zshFunction(name: string): string {
   return `# grove shell integration
 ${name}() {
   local __grove_out __grove_status
-  __grove_out="$(GROVE_SHELL_INTEGRATION=1 command grove "$@")"
+  __grove_out="$(GROVE_SHELL_INTEGRATION=1 __grove "$@")"
   __grove_status=$?
   if (( __grove_status != 0 )); then
     [[ -n "$__grove_out" ]] && print -r -- "$__grove_out"
@@ -151,22 +242,24 @@ function zshCompletions(name: string): string {
   const repoCase = REPO_COMMANDS.join('|')
 
   return `# grove completions
-_grove_candidates() {
-  local what="$1" repo="$2"
-  local -a out
-  out=("\${(@f)$(command grove __complete "$what" "$repo" 2>/dev/null)}")
-  print -r -- "\${out[@]}"
-}
-
 _grove_describe_from() {
   local tag="$1" what="$2" repo="$3"
-  local -a lines items
-  lines=("\${(@f)$(command grove __complete "$what" "$repo" 2>/dev/null)}")
-  items=()
+  local out
+  local -i code
+  # __complete itself always exits 0, so a failure here is grove not starting.
+  out="$(__grove __complete "$what" "$repo" 2>&1)"
+  code=$?
+  if (( code != 0 )); then
+    local -a reason
+    reason=("\${(@f)out}")
+    _message -r "grove completion failed (exit $code): \${reason[1]:-no output}"
+    return 1
+  fi
+  local -a items
   local line
-  for line in "\${lines[@]}"; do
-    [[ -z "$line" ]] && continue
+  for line in "\${(@f)out}"; do
     # Each line is "value<TAB>description"; _describe wants "value:description".
+    [[ "$line" == *$'\\t'* ]] || continue
     items+=("\${line%%$'\\t'*}:\${line#*$'\\t'}")
   done
   (( \${#items} )) && _describe -t "$tag" "$tag" items
@@ -319,7 +412,7 @@ function bashFunction(name: string): string {
   return `# grove shell integration
 ${name}() {
   local __grove_out __grove_status
-  __grove_out="$(GROVE_SHELL_INTEGRATION=1 command grove "$@")"
+  __grove_out="$(GROVE_SHELL_INTEGRATION=1 __grove "$@")"
   __grove_status=$?
   if [ $__grove_status -ne 0 ]; then
     [ -n "$__grove_out" ] && printf '%s\\n' "$__grove_out"
@@ -344,8 +437,16 @@ function bashCompletions(name: string): string {
 
   return `# grove completions
 _grove_values() {
+  local out code
+  # __complete itself always exits 0, so a failure here is grove not starting.
+  out="$(__grove __complete "$1" "\${2:-}" 2>&1)"
+  code=$?
+  if [ $code -ne 0 ]; then
+    printf '\\ngrove completion failed (exit %s): %s\\n' "$code" "\${out%%$'\\n'*}" >&2
+    return $code
+  fi
   # Strip the tab-separated description; bash shows values only.
-  command grove __complete "$1" "\${2:-}" 2>/dev/null | cut -f1
+  printf '%s\\n' "$out" | grep $'\\t' | cut -f1
 }
 
 _grove_complete() {
@@ -420,7 +521,7 @@ complete -F _grove_complete grove`
 function fishFunction(name: string): string {
   return `# grove shell integration
 function ${name} --description 'git worktree manager'
-    set -l __grove_out (GROVE_SHELL_INTEGRATION=1 command grove $argv)
+    set -l __grove_out (GROVE_SHELL_INTEGRATION=1 __grove $argv)
     set -l __grove_status $status
     if test $__grove_status -ne 0
         test -n "$__grove_out"; and printf '%s\\n' $__grove_out
@@ -447,7 +548,14 @@ function fishCompletions(name: string): string {
   return `# grove completions
 # fish renders "value<TAB>description" natively, so pass the lines through.
 function __grove_complete
-    command grove __complete $argv 2>/dev/null
+    # __complete itself always exits 0, so a failure here is grove not starting.
+    set -l out (__grove __complete $argv 2>&1)
+    set -l code $status
+    if test $code -ne 0
+        printf '\\ngrove completion failed (exit %s): %s\\n' $code "$out[1]" >&2
+        return $code
+    end
+    string match -re -- \\t $out
 end
 
 function __grove_repo_arg

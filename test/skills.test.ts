@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import {
   runCli,
+  type Sandbox,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
 import { expectError } from './helpers/grove.js'
@@ -157,48 +158,54 @@ describe('wt skills install', () => {
   })
 })
 
-describe('grove update', () => {
-  async function installForClaude(sandbox: { root: string }) {
+describe('wt skills install, once skills are installed', () => {
+  async function installForClaude(sandbox: Sandbox) {
     await mkdir(join(sandbox.root, '.claude'), { recursive: true })
+    await runCli(['skills', 'install', '--json', '--no-claude-auto-mode'], sandbox)
     return join(sandbox.root, '.claude', 'skills', 'wt-repos', 'SKILL.md')
   }
 
-  it('updates outdated skills only where grove skills are installed', async ({ sandbox }) => {
+  it('updates only the tools that already have them', async ({ sandbox }) => {
     const file = await installForClaude(sandbox)
-    await runCli(['skills', 'install', '--json', '--no-claude-auto-mode'], sandbox)
     await writeOlderSkill(sandbox, file)
-    // Detected, but without grove skills: update must not install here.
+    // Detected after the first install: named, but not installed into.
     await mkdir(join(sandbox.root, '.gemini'), { recursive: true })
 
-    const result = await runCli(['update', '--json'], sandbox)
+    const result = await runCli(['skills', 'install', '--json'], sandbox)
     expect(result.exitCode).toBe(0)
-    const data = result.json<{ skills: InstallReport[] }>()
-    expect(data.skills.map((report) => report.target)).toEqual(['claude'])
-    expect(data.skills[0]!.updated).toEqual(['wt-repos'])
+    const data = result.json<InstallTargets & { notInstalled: string[] }>()
+    expect(data.targets.map((report) => report.target)).toEqual(['claude'])
+    expect(data.targets[0]!.updated).toEqual(['wt-repos'])
+    expect(data.notInstalled).toEqual(['gemini'])
     expect(existsSync(join(sandbox.root, '.gemini', 'skills'))).toBe(false)
   })
 
-  it('installs a skill this version added alongside the existing ones', async ({ sandbox }) => {
+  it('adds a skill this version introduced alongside the existing ones', async ({ sandbox }) => {
     await installForClaude(sandbox)
-    await runCli(['skills', 'install', '--json', '--no-claude-auto-mode'], sandbox)
     await rm(join(sandbox.root, '.claude', 'skills', 'wt-tidy'), { recursive: true })
 
-    const result = await runCli(['update', '--json'], sandbox)
-    expect(result.json<{ skills: InstallReport[] }>().skills[0]!.installed).toEqual(['wt-tidy'])
+    const result = await runCli(['skills', 'install', '--json'], sandbox)
+    expect(result.json<InstallTargets>().targets[0]!.installed).toEqual(['wt-tidy'])
   })
 
-  it('does nothing when no grove skills are installed', async ({ sandbox }) => {
-    await mkdir(join(sandbox.root, '.claude'), { recursive: true })
-    const result = await runCli(['update', '--json'], sandbox)
-    expect(result.json<{ skills: InstallReport[] }>().skills).toEqual([])
-    expect(existsSync(join(sandbox.root, '.claude', 'skills'))).toBe(false)
+  it('does not ask about auto mode again', async ({ sandbox }) => {
+    await installForClaude(sandbox)
+    const result = await runCli(['skills', 'install', '--json'], sandbox)
+    expect(result.json<{ claudeAutoMode: unknown }>().claudeAutoMode).toBeNull()
+  })
+
+  it('still installs into a tool named with --target', async ({ sandbox }) => {
+    await installForClaude(sandbox)
+    await mkdir(join(sandbox.root, '.gemini'), { recursive: true })
+    const result = await runCli(['skills', 'install', '--target', 'gemini', '--json'], sandbox)
+    expect(result.json<InstallTargets>().targets[0]!.installed.sort()).toEqual(SKILLS)
   })
 })
 
 describe('outdated skills warning', () => {
   const WARNING = "grove's agent skills are out of date for Claude Code"
 
-  it('follows other commands until grove update runs', async ({ sandbox }) => {
+  it('follows other commands until the skills are updated', async ({ sandbox }) => {
     await mkdir(join(sandbox.root, '.claude'), { recursive: true })
     await runCli(['skills', 'install', '--json', '--no-claude-auto-mode'], sandbox)
     const file = join(sandbox.root, '.claude', 'skills', 'wt-repos', 'SKILL.md')
@@ -210,7 +217,7 @@ describe('outdated skills warning', () => {
     expect((await runCli(['__complete', 'repos'], sandbox)).stderr).toBe('')
     expect((await runCli(['repos', '--json'], sandbox)).stderr).not.toContain(WARNING)
 
-    await runCli(['update'], sandbox)
+    await runCli(['skills', 'install'], sandbox)
     expect((await runCli(['repos'], sandbox)).stderr).not.toContain(WARNING)
   })
 

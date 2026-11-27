@@ -143,7 +143,7 @@ function templatesDir(): string {
 }
 
 /** A destination to install into, named for display. */
-export interface ResolvedTarget {
+interface ResolvedTarget {
   name: string
   dir: string
 }
@@ -199,7 +199,7 @@ async function chooseTargets(
   return chosen.map(resolveOne)
 }
 
-export async function listBundledSkillNames(): Promise<string[]> {
+async function listBundledSkillNames(): Promise<string[]> {
   return [...(await bundledSkills()).keys()]
 }
 
@@ -255,7 +255,7 @@ function actionFor(status: SkillStatus, force: boolean): SkillAction {
 }
 
 /** Known tools that already have at least one grove skill installed. */
-export function targetsWithSkills(names: string[]): ResolvedTarget[] {
+function targetsWithSkills(names: string[]): ResolvedTarget[] {
   return Object.keys(TARGETS)
     .map(resolveOne)
     .filter((target) => names.some((name) => existsSync(join(target.dir, name, 'SKILL.md'))))
@@ -279,7 +279,7 @@ export async function outdatedSkillTargets(): Promise<string[]> {
   return labels
 }
 
-export interface InstallReport {
+interface InstallReport {
   target: string
   dir: string
   /** Newly installed. */
@@ -296,7 +296,7 @@ export interface InstallReport {
  * Bring each target's skills to this grove's versions, and record what was
  * written so a later run can tell an outdated skill from an edited one.
  */
-export async function installSkills(
+async function installSkills(
   targets: ResolvedTarget[],
   options: { force?: boolean } = {},
 ): Promise<InstallReport[]> {
@@ -335,7 +335,7 @@ export async function installSkills(
   return reports
 }
 
-export function reportInstall(reports: InstallReport[]): void {
+function reportInstall(reports: InstallReport[]): void {
   for (const report of reports) {
     const label = TARGETS[report.target]?.label ?? report.target
     for (const name of report.installed) {
@@ -359,7 +359,14 @@ async function runInstall(options: {
   dryRun?: boolean
   claudeAutoMode?: boolean
 }): Promise<void> {
-  const targets = await chooseTargets(options.target, 'install')
+  // Once grove's skills are installed somewhere, re-running install means
+  // "bring them up to date": no picker, no auto mode question, the same tools.
+  const existing = options.target?.length ? [] : targetsWithSkills(await listBundledSkillNames())
+  const updating = existing.length > 0
+  const targets = updating ? existing : await chooseTargets(options.target, 'install')
+  const elsewhere = updating
+    ? detectTargets().filter((name) => !existing.some((target) => target.name === name))
+    : []
 
   if (targets.length === 0) {
     log('Nothing selected.')
@@ -412,17 +419,22 @@ async function runInstall(options: {
 
   const reports = await installSkills(targets, { force: options.force })
 
-  const autoMode = wantsClaude(targets)
-    ? await installAutoModeHints(options.claudeAutoMode)
-    : null
+  const autoMode =
+    wantsClaude(targets) && !(updating && options.claudeAutoMode === undefined)
+      ? await installAutoModeHints(options.claudeAutoMode)
+      : null
 
   if (getOutputContext().json) {
-    emitJson({ ok: true, targets: reports, claudeAutoMode: autoMode })
+    emitJson({ ok: true, targets: reports, notInstalled: elsewhere, claudeAutoMode: autoMode })
     return
   }
 
   log()
   reportInstall(reports)
+  if (elsewhere.length > 0) {
+    const labels = elsewhere.map((name) => TARGETS[name]?.label ?? name).join(', ')
+    info(`Also detected ${labels}. Add the skills there with \`grove skills install --target ${elsewhere.join(' ')}\`.`)
+  }
   if (autoMode) reportAutoMode(autoMode)
   if (reports.some((report) => report.installed.length + report.updated.length > 0)) {
     log()
@@ -521,7 +533,7 @@ async function runList(options: { target?: string[] }): Promise<void> {
 const STATUS_LABELS: Record<SkillStatus, string> = {
   missing: pc.dim('not installed'),
   current: pc.green('up to date'),
-  outdated: pc.yellow('outdated, run `grove update`'),
+  outdated: pc.yellow('outdated, run `grove skills install`'),
   modified: pc.yellow('edited locally'),
 }
 

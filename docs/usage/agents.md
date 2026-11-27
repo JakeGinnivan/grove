@@ -54,20 +54,17 @@ grove skills uninstall   # remove them
 
 ### After upgrading grove
 
-```bash
-grove update
-```
-
-Upgrading grove doesn't change the skill copies it installed. `grove update`
-brings them up to this version for every tool that already has grove's skills,
-and adds any skill the new version introduced. It asks nothing and never
-installs for a tool you didn't install for. When an upgrade leaves skills
-behind, other grove commands end with a one-line reminder to run it.
+Run `grove skills install` again. Once grove's skills are installed somewhere,
+install without `--target` updates the tools that already have them, without
+the tool picker or the auto mode question, and adds any skill the new version
+introduced. A tool detected since then is named rather than installed into;
+add it with `--target`. While skills are behind, other grove commands end with
+a one-line reminder.
 
 grove records a hash of each skill it writes in `~/.config/grove/skills.json`,
 which is how it tells the two kinds of difference apart:
 
-| Status | Meaning | What `grove update` and `grove skills install` do |
+| Status | Meaning | What `grove skills install` does |
 | --- | --- | --- |
 | up to date | Same as this version's skill | Nothing |
 | outdated | Still what grove wrote, and this version has a newer one | Replace it |

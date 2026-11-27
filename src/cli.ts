@@ -17,7 +17,6 @@ import { cleanupCommand } from './commands/cleanup.js'
 import { syncCommand } from './commands/sync.js'
 import { setupCommand } from './commands/setup.js'
 import { outdatedSkillTargets, skillsCommand } from './commands/skills.js'
-import { updateCommand } from './commands/update.js'
 import { shellInitCommand } from './commands/shell-init.js'
 import { profileCommand } from './commands/profile.js'
 import { completeCommand } from './commands/complete.js'
@@ -64,7 +63,6 @@ function buildProgram(): Command {
   program.addCommand(reposCommand())
   program.addCommand(profileCommand())
   program.addCommand(skillsCommand())
-  program.addCommand(updateCommand())
   program.addCommand(setupCommand())
   program.addCommand(shellInitCommand())
   program.addCommand(completeCommand(), { hidden: true })
@@ -82,7 +80,7 @@ function topLevelName(command: Command): string {
  * Commands that manage skills or the shell report on them already, and
  * completion and shell-init output must stay free of anything extra.
  */
-const NO_SKILLS_CHECK = new Set(['update', 'skills', 'setup', 'shell-init', '__complete'])
+const NO_SKILLS_CHECK = new Set(['skills', 'setup', 'shell-init', '__complete'])
 
 /**
  * Upgrading grove doesn't touch the skill copies it installed for agents, so
@@ -93,7 +91,7 @@ async function warnIfSkillsOutdated(command: string): Promise<void> {
   try {
     const outdated = await outdatedSkillTargets()
     if (outdated.length === 0) return
-    warn(`grove's agent skills are out of date for ${outdated.join(', ')}. Run \`grove update\`.`)
+    warn(`grove's agent skills are out of date for ${outdated.join(', ')}. Run \`grove skills install\` to update them.`)
   } catch {
     // The nudge is a courtesy; it must never fail the command it follows.
   }

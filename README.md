@@ -46,8 +46,8 @@ grove skills install
 This teaches your agents to find your repos, create a worktree per task and
 clean up after themselves. See [Agent support](docs/usage/agents.md).
 
-After upgrading grove, run `grove update` to bring the installed skills up to
-the new version. New terminals already use the new shell integration.
+After upgrading grove, run `grove skills install` again to update the skills.
+New terminals already use the new shell integration.
 
 ## Quick tour
 

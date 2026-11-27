@@ -46,15 +46,11 @@ describe('detectInstall', () => {
       .toBe('yarn')
   })
 
-  plainIt('finds mise before the npm layout inside it', () => {
-    expect(detectInstall('/home/a/.local/share/mise/installs/npm-jakeginnivan-grove/0.14.0/lib/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'linux'))
-      .toEqual({ method: 'mise', command: ['mise', 'upgrade', `npm:${PACKAGE_NAME}`] })
-  })
-
   plainIt('declines anything that is not a global install', () => {
     expect(detectInstall('/Users/a/_code/grove/main/dist/cli.mjs', 'darwin')).toBeNull()
     expect(detectInstall('/Users/a/.npm/_npx/1234/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'darwin')).toBeNull()
     expect(detectInstall('/Users/a/app/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'darwin')).toBeNull()
+    expect(detectInstall('/home/a/.local/share/mise/installs/npm-jakeginnivan-grove/0.14.0/lib/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'linux')).toBeNull()
   })
 })
 
@@ -176,8 +172,8 @@ describe('grove upgrade', () => {
       .toEqual(['install', '--global', '--prefix', prefix, `${PACKAGE_NAME}@latest`])
   })
 
-  // mise exits 0 without upgrading while a release is younger than its
-  // minimum_release_age, so a clean exit alone proves nothing.
+  // A package manager with a minimum release age exits 0 without upgrading
+  // while the release is too new, so a clean exit alone proves nothing.
   it.skipIf(process.platform === 'win32')('does not claim an upgrade the package manager did not make', async ({ sandbox }) => {
     latest = '999.0.0'
     const { result } = await upgradeFromNpmPrefix(sandbox.root, VERSION)

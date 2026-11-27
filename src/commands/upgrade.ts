@@ -63,9 +63,9 @@ export function upgradeCommand(currentVersion: string): Command {
         })
       }
 
-      // A package manager can exit 0 without moving: mise holds back releases
-      // younger than its minimum_release_age, and keeps to a pinned version.
-      // Only the grove that new shells will run can say whether it worked.
+      // A package manager can exit 0 without moving, for example when it holds
+      // back releases younger than a minimum release age. Only the grove that
+      // new shells will run can say whether it worked.
       const installed = await versionOnPath()
       const upgraded = installed !== null && !isNewer(latest, installed)
       if (json) {
@@ -78,9 +78,7 @@ export function upgradeCommand(currentVersion: string): Command {
         warn(`${install.method} finished, but there is no grove on PATH to confirm the upgrade with.`)
       } else {
         warn(`${install.method} finished, but grove on PATH is still ${installed}.`)
-        if (install.method === 'mise') {
-          info('mise skips releases younger than its minimum_release_age setting, and keeps to the version your mise config pins. Its output above says which.')
-        }
+        info(`If ${install.method} holds back new releases for a while, its output above says so.`)
         return
       }
       // This process is still the old grove carrying the old skills, so it

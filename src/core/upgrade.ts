@@ -2,7 +2,7 @@ import { WtError } from './errors.js'
 
 export const PACKAGE_NAME = '@jakeginnivan/grove'
 
-export type InstallMethod = 'npm' | 'pnpm' | 'yarn' | 'mise'
+export type InstallMethod = 'npm' | 'pnpm' | 'yarn'
 
 export interface Install {
   method: InstallMethod
@@ -27,11 +27,9 @@ export function detectInstall(cliPath: string, platform: NodeJS.Platform = proce
   const windows = platform === 'win32'
   const lower = path.toLowerCase()
 
-  // mise's npm backend installs each version under installs/npm-<name>/, and
-  // inside that it looks like an npm prefix, so it has to be checked first.
-  if (/\/mise\/installs\/npm-[^/]+\//.test(path)) {
-    return { method: 'mise', command: ['mise', 'upgrade', `npm:${PACKAGE_NAME}`] }
-  }
+  // mise's npm backend lays each version out like an npm prefix, and npm
+  // would upgrade inside a directory mise owns. Upgrading there is mise's job.
+  if (/\/mise\/installs\/npm-[^/]+\//.test(path)) return null
 
   // $PNPM_HOME/global/<layout version>/..., with PNPM_HOME defaulting to
   // ~/.local/share/pnpm, ~/Library/pnpm or %LOCALAPPDATA%\pnpm. pnpm 11
@@ -98,7 +96,6 @@ export const UPGRADE_HINT = [
   `npm install --global ${PACKAGE_NAME}@latest`,
   `pnpm add --global ${PACKAGE_NAME}@latest`,
   `yarn global add ${PACKAGE_NAME}@latest`,
-  `mise upgrade npm:${PACKAGE_NAME}`,
 ].join('\n  ')
 
 /**

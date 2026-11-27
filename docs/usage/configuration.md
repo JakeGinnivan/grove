@@ -99,3 +99,33 @@ nothing.
 
 Everything works without the wrapper too — commands print the path instead of
 jumping, so `cd "$(grove pick myrepo)"` remains available.
+
+## Upgrading grove
+
+```bash
+grove upgrade           # install the latest release
+grove upgrade --check   # only say whether there is one
+```
+
+grove asks the npm registry for its latest version, honouring
+`npm_config_registry`, and does nothing if it already has it. Otherwise it
+works out which tool installed it from where its own files live, and runs
+that tool:
+
+| Installed with | `grove upgrade` runs |
+| --- | --- |
+| npm | `npm install --global --prefix <the prefix grove is in> @jakeginnivan/grove@latest` |
+| pnpm | `pnpm add --global @jakeginnivan/grove@latest` |
+| Yarn classic | `yarn global add @jakeginnivan/grove@latest` |
+| mise | `mise upgrade npm:@jakeginnivan/grove` |
+
+npm gets the prefix grove is in, so a version manager that picks node per
+directory can't send the upgrade to a different node. mise stays within the
+version your mise config asks for, so a pinned grove stays pinned.
+
+A grove run from a checkout, through npx, or as a project dependency is not
+a global install. `grove upgrade` stops with the commands above rather than
+guess.
+
+After upgrading, run `grove skills install` to update the agent skills (see
+[Agent support](agents.md#after-upgrading-grove)).

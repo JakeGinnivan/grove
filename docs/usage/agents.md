@@ -54,7 +54,8 @@ grove skills uninstall   # remove them
 
 ### After upgrading grove
 
-Run `grove skills install` again. Once grove's skills are installed somewhere,
+After `grove upgrade`, or upgrading grove any other way, run
+`grove skills install` again. Once grove's skills are installed somewhere,
 install without `--target` updates the tools that already have them, without
 the tool picker or the auto mode question, and adds any skill the new version
 introduced. A tool detected since then is named rather than installed into;

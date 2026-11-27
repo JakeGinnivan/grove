@@ -22,6 +22,7 @@ import { profileCommand } from './commands/profile.js'
 import { completeCommand } from './commands/complete.js'
 import { portCommand } from './commands/port.js'
 import { focusCommand } from './commands/focus.js'
+import { upgradeCommand } from './commands/upgrade.js'
 
 // package.json is the single source of truth for the version; changesets bumps
 // it and nothing else needs updating. npm always ships it next to the bundle,
@@ -64,6 +65,7 @@ function buildProgram(): Command {
   program.addCommand(profileCommand())
   program.addCommand(skillsCommand())
   program.addCommand(setupCommand())
+  program.addCommand(upgradeCommand(VERSION))
   program.addCommand(shellInitCommand())
   program.addCommand(completeCommand(), { hidden: true })
 
@@ -78,9 +80,10 @@ function topLevelName(command: Command): string {
 
 /**
  * Commands that manage skills or the shell report on them already, and
- * completion and shell-init output must stay free of anything extra.
+ * completion and shell-init output must stay free of anything extra. After an
+ * upgrade this process is the old grove, so its verdict on skills is stale.
  */
-const NO_SKILLS_CHECK = new Set(['skills', 'setup', 'shell-init', '__complete'])
+const NO_SKILLS_CHECK = new Set(['skills', 'setup', 'shell-init', 'upgrade', '__complete'])
 
 /**
  * Upgrading grove doesn't touch the skill copies it installed for agents, so

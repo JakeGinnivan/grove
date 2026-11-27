@@ -22,9 +22,8 @@ non-interactively so coding agents can drive it.
 npm install -g @jakeginnivan/grove
 ```
 
-pnpm (`pnpm add -g`), Yarn classic (`yarn global add`) and mise
-(`mise use -g npm:@jakeginnivan/grove`) work too. Whichever you use,
-`grove upgrade` later upgrades grove with the same tool.
+pnpm (`pnpm add -g`) and Yarn classic (`yarn global add`) work too. Whichever
+you use, `grove upgrade` later upgrades grove with the same tool.
 
 **2. Configure** your branch prefix, clone directory and task trackers, and
 add the shell integration:

@@ -10,6 +10,7 @@ import {
   type Shell,
 } from '../core/shell-rc.js'
 import { TARGET_NAMES } from './skills.js'
+import { WtError } from '../core/errors.js'
 
 /** Agent tools offered as `--target` completions. */
 const AGENT_TARGETS = TARGET_NAMES
@@ -27,6 +28,14 @@ export function shellInitCommand(): Command {
     .option('--no-completions', 'emit only the function, without completions')
     .option('--install', "add the integration to your shell's startup file")
     .action(async (shellArg: string | undefined, options: ShellInitOptions) => {
+      // The name is written unquoted into function definitions, completion
+      // registrations and the startup file line.
+      if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(options.name)) {
+        throw new WtError(`--name must be a plain command name, not ${JSON.stringify(options.name)}.`, {
+          code: 'invalid_name',
+          hint: 'Use letters, digits, - and _, starting with a letter or _.',
+        })
+      }
       const shell = shellArg === undefined ? detectShell() : parseShell(shellArg)
       if (options.install) {
         await runInstall(shell, options)
@@ -449,6 +458,18 @@ _grove_values() {
   printf '%s\\n' "$out" | grep $'\\t' | cut -f1
 }
 
+# Fill COMPREPLY with the lines on stdin that start with $1. Not compgen -W:
+# it expands its word list, and these words are branch and repo names that
+# anyone who can push to origin chooses, so $(...) in one would run. Each is
+# escaped too, so accepting the completion doesn't run it either.
+_grove_reply() {
+  local line
+  COMPREPLY=()
+  while IFS= read -r line; do
+    [[ -n "$line" && "$line" == "$1"* ]] && COMPREPLY+=("$(printf '%q' "$line")")
+  done
+}
+
 _grove_complete() {
   local cur prev words cword
   cur="\${COMP_WORDS[COMP_CWORD]}"
@@ -494,17 +515,17 @@ _grove_complete() {
 
   if [[ "$repo_commands" == *" $cmd "* ]]; then
     if [ "$COMP_CWORD" -eq 2 ]; then
-      COMPREPLY=( $(compgen -W "$(_grove_values repos)" -- "$cur") )
+      _grove_reply "$cur" < <(_grove_values repos)
       return
     fi
     if [ "$COMP_CWORD" -eq 3 ]; then
       case "$cmd" in
         checkout|co)
-          COMPREPLY=( $(compgen -W "$(_grove_values branches "\${COMP_WORDS[2]}")" -- "$cur") )
+          _grove_reply "$cur" < <(_grove_values branches "\${COMP_WORDS[2]}")
           return
           ;;
         pick|cd|cleanup|rm)
-          COMPREPLY=( $(compgen -W "$(_grove_values worktrees "\${COMP_WORDS[2]}")" -- "$cur") )
+          _grove_reply "$cur" < <(_grove_values worktrees "\${COMP_WORDS[2]}")
           return
           ;;
       esac
@@ -633,9 +654,16 @@ ${commands}
     $position = $tokens.Count
     if ($wordToComplete) { $position-- }
 
+    # PowerShell inserts a completion as typed, and branch and repo names are
+    # chosen by anyone who can push to origin, so one holding $(...) would run
+    # with the line. Single quotes keep it literal; PowerShell also ends a
+    # single-quoted string on the typographic quotes, so those are doubled too.
     function New-Result($value, $desc) {
+        $text = if ($value -match '[^\\w./:\\\\-]') {
+            "'" + ($value -replace "['‘’‚‛]", '$0$0') + "'"
+        } else { $value }
         [System.Management.Automation.CompletionResult]::new(
-            $value, $value, 'ParameterValue', $desc)
+            $text, $value, 'ParameterValue', $desc)
     }
 
     function Get-GroveCandidates($what, $repo) {
@@ -656,13 +684,13 @@ ${commands}
     $sub = $tokens[1]
     if ($position -eq 2 -and $repoCommands -contains $sub) {
         return Get-GroveCandidates 'repos' $null |
-            Where-Object { $_.CompletionText -like "$wordToComplete*" }
+            Where-Object { $_.ListItemText -like "$wordToComplete*" }
     }
     if ($position -eq 3 -and $repoCommands -contains $sub) {
         $repo = $tokens[2]
         $what = if ($sub -in 'checkout', 'co') { 'branches' } else { 'worktrees' }
         return Get-GroveCandidates $what $repo |
-            Where-Object { $_.CompletionText -like "$wordToComplete*" }
+            Where-Object { $_.ListItemText -like "$wordToComplete*" }
     }
     if ($position -eq 2 -and $sub -eq 'profile') {
         return @('list', 'add', 'remove', 'default', 'apply') |

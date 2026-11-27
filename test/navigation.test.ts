@@ -1,5 +1,6 @@
 import { describe, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -214,6 +215,44 @@ describe('shell integration', () => {
       )
       expect(out).toContain('grove completion failed (exit 1): mise ERROR')
       expect(out.trim().endsWith('[]')).toBe(true)
+    })
+  })
+
+  it('refuses a function name that is not a plain command name', async ({ sandbox }) => {
+    expectError(await runCli(['shell-init', 'bash', '--name', 'wt; touch PWNED', '--json'], sandbox), 'invalid_name')
+  })
+
+  /**
+   * Branch names come from whoever can push to origin, and git allows `$`,
+   * parentheses and backticks in them. bash's `compgen -W` expands its word
+   * list, so passing these names through it would run them as code.
+   */
+  describe.skipIf(process.platform === 'win32')('in bash, with hostile branch names on origin', () => {
+    const HOSTILE = ['$(touch${IFS}PWNED)', '`touch${IFS}PWNED2`']
+
+    async function completeBranches(sandbox: Sandbox) {
+      for (const name of HOSTILE) {
+        await gitIn(['push', 'origin', `HEAD:refs/heads/${name}`], sandbox.mainPath)
+      }
+      await gitIn(['fetch', 'origin'], sandbox.mainPath)
+      const init = (await runCli(['shell-init', 'bash'], sandbox)).stdout
+      const out = execFileSync('bash', ['-c', `${init}
+COMP_WORDS=(wt checkout demo ''); COMP_CWORD=3; _grove_complete; printf '%s\\n' "\${COMPREPLY[@]}"`], {
+        cwd: sandbox.root,
+        encoding: 'utf8',
+        env: { ...process.env, HOME: sandbox.root, GROVE_REPOS_FILE: sandbox.reposFile },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      return out.trim().split('\n')
+    }
+
+    it('offers them without running them', async ({ sandbox }) => {
+      const replies = await completeBranches(sandbox)
+      expect(existsSync(join(sandbox.root, 'PWNED'))).toBe(false)
+      expect(existsSync(join(sandbox.root, 'PWNED2'))).toBe(false)
+      // Escaped, so accepting the completion doesn't run them either.
+      expect(replies).toContain('\\$\\(touch\\$\\{IFS\\}PWNED\\)')
+      expect(replies).toContain('\\`touch\\$\\{IFS\\}PWNED2\\`')
     })
   })
 

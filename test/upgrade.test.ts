@@ -1,0 +1,212 @@
+import { describe, expect, it as plainIt, beforeAll, afterAll } from 'vitest'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { chmod, cp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { detectInstall, isNewer, isVersion, locateInstall, PACKAGE_NAME, quoteForCmd } from '../src/core/upgrade.js'
+import { runCli } from './helpers/sandbox.js'
+import { it } from './helpers/fixtures.js'
+import { expectError } from './helpers/grove.js'
+
+const execFileAsync = promisify(execFile)
+const projectRoot = fileURLToPath(new URL('..', import.meta.url))
+const VERSION = (JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8')) as { version: string }).version
+
+describe('detectInstall', () => {
+  plainIt('finds npm and upgrades into the same prefix', () => {
+    expect(detectInstall('/opt/homebrew/lib/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'darwin')).toEqual({
+      method: 'npm',
+      command: ['npm', 'install', '--global', '--prefix', '/opt/homebrew', `${PACKAGE_NAME}@latest`],
+    })
+    // npm under a version manager's node keeps that node's prefix.
+    expect(detectInstall('/home/a/.local/share/mise/installs/node/24.1.0/lib/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'linux')?.command)
+      .toContain('/home/a/.local/share/mise/installs/node/24.1.0')
+    expect(detectInstall('C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\@jakeginnivan\\grove\\dist\\cli.mjs', 'win32')?.command)
+      .toContain('C:\\Users\\a\\AppData\\Roaming\\npm')
+  })
+
+  plainIt('finds pnpm', () => {
+    for (const path of [
+      '/Users/a/.local/share/pnpm/global/v11/.pnpm/@jakeginnivan+grove@0.14.0/node_modules/@jakeginnivan/grove/dist/cli.mjs',
+      '/Users/a/Library/pnpm/global/5/node_modules/.pnpm/@jakeginnivan+grove@0.14.0/node_modules/@jakeginnivan/grove/dist/cli.mjs',
+    ]) {
+      expect(detectInstall(path, 'darwin')?.method).toBe('pnpm')
+    }
+    expect(detectInstall('C:\\Users\\a\\AppData\\Local\\pnpm\\global\\5\\node_modules\\@jakeginnivan\\grove\\dist\\cli.mjs', 'win32')?.method)
+      .toBe('pnpm')
+  })
+
+  plainIt('finds yarn classic', () => {
+    expect(detectInstall('/home/a/.config/yarn/global/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'linux')?.method).toBe('yarn')
+    expect(detectInstall('C:\\Users\\a\\AppData\\Local\\Yarn\\Data\\global\\node_modules\\@jakeginnivan\\grove\\dist\\cli.mjs', 'win32')?.method)
+      .toBe('yarn')
+  })
+
+  plainIt('declines anything that is not a global install', () => {
+    expect(detectInstall('/Users/a/_code/grove/main/dist/cli.mjs', 'darwin')).toBeNull()
+    expect(detectInstall('/Users/a/.npm/_npx/1234/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'darwin')).toBeNull()
+    expect(detectInstall('/Users/a/app/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'darwin')).toBeNull()
+    expect(detectInstall('/home/a/.local/share/mise/installs/npm-jakeginnivan-grove/0.14.0/lib/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'linux')).toBeNull()
+  })
+})
+
+describe('locateInstall', () => {
+  const store = '/Users/a/.local/share/pnpm/store/v11/links/@jakeginnivan/grove/0.14.0/279d/node_modules/@jakeginnivan/grove/dist/cli.mjs'
+
+  plainIt('finds pnpm 11 from its shim path or the store path shell integration uses', () => {
+    const shim = '/Users/a/.local/share/pnpm/global/v11/5c55/node_modules/@jakeginnivan/grove/dist/cli.mjs'
+    expect(locateInstall(shim, store, 'darwin')?.method).toBe('pnpm')
+    expect(locateInstall(store, store, 'darwin')?.method).toBe('pnpm')
+  })
+
+  plainIt('trusts a project install over a real path in the shared store', () => {
+    expect(locateInstall('/Users/a/app/node_modules/@jakeginnivan/grove/dist/cli.mjs', store, 'darwin')).toBeNull()
+    expect(locateInstall('/Users/a/app/node_modules/.bin/grove', store, 'darwin')).toBeNull()
+  })
+
+  plainIt('falls back to the real path for a symlinked global bin', () => {
+    expect(locateInstall('/usr/local/bin/grove', '/usr/local/lib/node_modules/@jakeginnivan/grove/dist/cli.mjs', 'darwin')?.method)
+      .toBe('npm')
+  })
+})
+
+describe('isVersion', () => {
+  plainIt('accepts versions and refuses anything that could carry terminal escapes', () => {
+    expect(isVersion('0.15.0')).toBe(true)
+    expect(isVersion('1.0.0-next.1+build.5')).toBe(true)
+    expect(isVersion('0.15.0\u001b]0;pwned\u0007')).toBe(false)
+    expect(isVersion('0.15.0 && rm -rf ~')).toBe(false)
+    expect(isVersion('latest')).toBe(false)
+  })
+})
+
+describe('quoteForCmd', () => {
+  plainIt('quotes arguments cmd.exe would split or interpret', () => {
+    expect(quoteForCmd(['install', '--prefix', 'C:\\Users\\Jo Smith\\npm', 'a&b']))
+      .toEqual(['install', '--prefix', '"C:\\Users\\Jo Smith\\npm"', '"a&b"'])
+  })
+
+  plainIt('refuses what cmd.exe expands even inside quotes', () => {
+    expect(() => quoteForCmd(['C:\\%PATH%'])).toThrow(/safely/)
+    expect(() => quoteForCmd(['a"b'])).toThrow(/safely/)
+  })
+})
+
+describe('isNewer', () => {
+  plainIt('compares numerically, not as strings', () => {
+    expect(isNewer('0.15.0', '0.14.0')).toBe(true)
+    expect(isNewer('0.10.0', '0.9.9')).toBe(true)
+    expect(isNewer('0.14.0', '0.14.0')).toBe(false)
+    expect(isNewer('0.13.9', '0.14.0')).toBe(false)
+  })
+
+  plainIt('sorts a prerelease below its release', () => {
+    expect(isNewer('1.0.0', '1.0.0-next.1')).toBe(true)
+    expect(isNewer('1.0.0-next.1', '1.0.0')).toBe(false)
+  })
+})
+
+describe('grove upgrade', () => {
+  let server: Server
+  let registry: string
+  let latest = VERSION
+
+  beforeAll(async () => {
+    server = createServer((request, response) => {
+      if (request.url === `/${PACKAGE_NAME.replace('/', '%2F')}/latest`) {
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify({ name: PACKAGE_NAME, version: latest }))
+      } else {
+        response.statusCode = 404
+        response.end()
+      }
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    registry = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  })
+
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
+
+  it('says so when already on the latest release', async ({ sandbox }) => {
+    latest = VERSION
+    const result = await runCli(['upgrade', '--json'], sandbox, { npm_config_registry: registry })
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.json()).toMatchObject({ ok: true, current: VERSION, latest: VERSION, upgraded: false })
+  })
+
+  it('reports a newer release with --check and installs nothing', async ({ sandbox }) => {
+    latest = '999.0.0'
+    const result = await runCli(['upgrade', '--check', '--json'], sandbox, { npm_config_registry: registry })
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(result.json()).toMatchObject({ ok: true, latest: '999.0.0', upgraded: false })
+  })
+
+  it('refuses a registry answer that is not a version', async ({ sandbox }) => {
+    latest = '9.9.9\u001b]0;pwned\u0007'
+    const result = await runCli(['upgrade', '--json'], sandbox, { npm_config_registry: registry })
+    expectError(result, 'registry_error')
+  })
+
+  it('refuses to guess for a checkout that is not a global install', async ({ sandbox }) => {
+    latest = '999.0.0'
+    const result = await runCli(['upgrade', '--json'], sandbox, { npm_config_registry: registry })
+    const error = expectError(result, 'unknown_install')
+    expect(error.hint).toContain('npm install --global')
+  })
+
+  /**
+   * Run grove from a fake npm prefix holding a copy of the build, with a fake
+   * npm that records how it was called, and a fake grove on PATH standing in
+   * for whatever the upgrade left there. The fakes are shell scripts, so these
+   * tests are POSIX only.
+   */
+  async function upgradeFromNpmPrefix(root: string, versionAfter: string) {
+    const prefix = join(root, 'npm-prefix')
+    const pkg = join(prefix, 'lib/node_modules', PACKAGE_NAME)
+    await mkdir(pkg, { recursive: true })
+    await cp(join(projectRoot, 'dist'), join(pkg, 'dist'), { recursive: true })
+    await cp(join(projectRoot, 'package.json'), join(pkg, 'package.json'))
+    await symlink(join(projectRoot, 'node_modules'), join(pkg, 'node_modules'))
+
+    const bin = join(root, 'fake-bin')
+    const record = join(root, 'npm-args')
+    await mkdir(bin)
+    await writeFile(join(bin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\npwd -P > '${record}.cwd'\necho installed-by-fake-npm\n`)
+    await writeFile(join(bin, 'grove'), `#!/bin/sh\necho ${versionAfter}\n`)
+    await chmod(join(bin, 'npm'), 0o755)
+    await chmod(join(bin, 'grove'), 0o755)
+
+    const { stdout } = await execFileAsync(process.execPath, [join(pkg, 'dist/cli.mjs'), 'upgrade', '--json'], {
+      env: {
+        ...process.env,
+        HOME: root,
+        USERPROFILE: root,
+        PATH: `${bin}:${process.env['PATH'] ?? ''}`,
+        npm_config_registry: registry,
+      },
+    })
+    return { result: JSON.parse(stdout) as unknown, prefix: realpathSync(prefix), record }
+  }
+
+  it.skipIf(process.platform === 'win32')('runs npm against the prefix grove was installed into', async ({ sandbox }) => {
+    latest = '999.0.0'
+    const { result, prefix, record } = await upgradeFromNpmPrefix(sandbox.root, '999.0.0')
+    expect(result).toMatchObject({ ok: true, method: 'npm', latest: '999.0.0', installed: '999.0.0', upgraded: true })
+    expect((await readFile(record, 'utf8')).trim().split('\n'))
+      .toEqual(['install', '--global', '--prefix', prefix, `${PACKAGE_NAME}@latest`])
+    // From home, not the caller's directory, whose config could steer it.
+    expect((await readFile(`${record}.cwd`, 'utf8')).trim()).toBe(realpathSync(sandbox.root))
+  })
+
+  // A package manager with a minimum release age exits 0 without upgrading
+  // while the release is too new, so a clean exit alone proves nothing.
+  it.skipIf(process.platform === 'win32')('does not claim an upgrade the package manager did not make', async ({ sandbox }) => {
+    latest = '999.0.0'
+    const { result } = await upgradeFromNpmPrefix(sandbox.root, VERSION)
+    expect(result).toMatchObject({ ok: true, latest: '999.0.0', installed: VERSION, upgraded: false })
+  })
+})

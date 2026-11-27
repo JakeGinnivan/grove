@@ -197,6 +197,7 @@ const COMMANDS: [string, string][] = [
   ['profile', 'Manage clone profiles'],
   ['skills', 'Install agent skills'],
   ['setup', 'Configure grove'],
+  ['upgrade', 'Upgrade grove to the latest release'],
   ['shell-init', 'Print shell integration'],
 ]
 

@@ -22,6 +22,9 @@ non-interactively so coding agents can drive it.
 npm install -g @jakeginnivan/grove
 ```
 
+pnpm (`pnpm add -g`) and Yarn classic (`yarn global add`) work too. Whichever
+you use, `grove upgrade` later upgrades grove with the same tool.
+
 **2. Configure** your branch prefix, clone directory and task trackers, and
 add the shell integration:
 
@@ -46,7 +49,8 @@ grove skills install
 This teaches your agents to find your repos, create a worktree per task and
 clean up after themselves. See [Agent support](docs/usage/agents.md).
 
-After upgrading grove, run `grove skills install` again to update the skills.
+Upgrade grove with `grove upgrade`, then run `grove skills install` again to
+update the skills.
 New terminals already use the new shell integration.
 
 ## Quick tour

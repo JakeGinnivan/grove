@@ -261,6 +261,12 @@ function targetsWithSkills(names: string[]): ResolvedTarget[] {
     .filter((target) => names.some((name) => existsSync(join(target.dir, name, 'SKILL.md'))))
 }
 
+/** Whether any known tool has at least one of grove's skills installed. */
+export async function hasInstalledSkills(): Promise<boolean> {
+  const bundled = await bundledSkills()
+  return targetsWithSkills([...bundled.keys()]).length > 0
+}
+
 /**
  * Labels of tools whose grove skills an update would change: one is older
  * than this grove's, or this grove ships a skill the tool doesn't have yet.

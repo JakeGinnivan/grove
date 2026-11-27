@@ -1,14 +1,19 @@
 import { describe, expect } from 'vitest'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   runCli,
   runCliWithTty,
   gitIn,
   commitAt,
+  type Sandbox,
 } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
 import { newWorktree, expectError } from './helpers/grove.js'
+
+const CLI_PATH = resolve(fileURLToPath(new URL('../dist/cli.mjs', import.meta.url)))
 
 describe('wt list', () => {
   it('treats a branch pushed without -u as pushed', async ({ sandbox }) => {
@@ -145,7 +150,7 @@ describe('shell integration', () => {
 
   it('generates a wrapper for each supported shell', async ({ sandbox }) => {
     const expected = {
-      zsh: ['wt()', '__WT_CD__', 'command grove'],
+      zsh: ['wt()', '__WT_CD__', '__grove "$@"'],
       fish: ['function wt', '__WT_CD__'],
       powershell: ['Set-Location', '__WT_CD__'],
     }
@@ -154,6 +159,62 @@ describe('shell integration', () => {
       expect(result.exitCode, shell).toBe(0)
       for (const snippet of snippets) expect(result.stdout, shell).toContain(snippet)
     }
+  })
+
+  it('pins the integration to the node and script that generated it', async ({ sandbox }) => {
+    const result = await runCli(['shell-init', 'zsh'], sandbox)
+    expect(result.stdout).toContain(`__grove_node='${process.execPath}'`)
+    expect(result.stdout).toContain(`__grove_cli='${await realpath(CLI_PATH)}'`)
+    expect(result.stdout).toContain('grove() {')
+  })
+
+  it('does not shadow itself when the function is named grove', async ({ sandbox }) => {
+    const result = await runCli(['shell-init', 'zsh', '--name', 'grove'], sandbox)
+    expect(result.stdout.match(/^grove\(\) \{/gm)).toHaveLength(1)
+  })
+
+  /**
+   * A version manager's node shim on PATH fails before grove starts in a repo
+   * whose tool config it rejects. The fake `grove` here fails the same way.
+   */
+  describe.skipIf(process.platform === 'win32')('in bash, with a broken grove on PATH', () => {
+    async function bashWithBrokenGrove(sandbox: Sandbox, script: string) {
+      const bin = join(sandbox.root, 'broken-bin')
+      await mkdir(bin, { recursive: true })
+      await writeFile(
+        join(bin, 'grove'),
+        '#!/bin/sh\necho "mise ERROR Config files in ./mise.toml are not trusted." >&2\nexit 1\n',
+        { mode: 0o755 },
+      )
+      const init = (await runCli(['shell-init', 'bash'], sandbox)).stdout
+      return execFileSync('bash', ['-c', `${init}\n${script}`], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: sandbox.root,
+          GROVE_REPOS_FILE: sandbox.reposFile,
+          PATH: `${bin}:/usr/bin:/bin`,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    }
+
+    it('completes through the pinned node', async ({ sandbox }) => {
+      const out = await bashWithBrokenGrove(
+        sandbox,
+        `COMP_WORDS=(wt new ''); COMP_CWORD=2; _grove_complete; echo "\${COMPREPLY[*]}"`,
+      )
+      expect(out.trim()).toBe('demo')
+    })
+
+    it('warns when grove cannot start instead of completing nothing', async ({ sandbox }) => {
+      const out = await bashWithBrokenGrove(
+        sandbox,
+        `__grove_node=/missing; COMP_WORDS=(wt new ''); COMP_CWORD=2; _grove_complete 2>&1; echo "[\${COMPREPLY[*]}]"`,
+      )
+      expect(out).toContain('grove completion failed (exit 1): mise ERROR')
+      expect(out.trim().endsWith('[]')).toBe(true)
+    })
   })
 
   // Empty, so the developer's own ZDOTDIR or XDG_CONFIG_HOME cannot move the

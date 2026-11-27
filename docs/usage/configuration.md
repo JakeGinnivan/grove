@@ -83,5 +83,19 @@ Completions are registered for both `wt` and `grove`. Place the `eval` after
 `compinit` in your `.zshrc`; if `compinit` has not run, the function is still
 defined and completion registration is skipped silently.
 
+In zsh, bash and fish, the script records the absolute paths of the node binary
+and the grove script that generated it, and `wt`, its completions and a `grove`
+function call those paths directly. A version manager's `node` shim (mise,
+asdf) reads the current directory's tool config before it starts node, so
+calling `grove` through `PATH` fails in any repo whose config is untrusted or
+names a node that is not installed. If either recorded path disappears, as
+after removing that node version or upgrading grove, the functions fall back to
+`grove` on `PATH`, and a new shell records the new paths. PowerShell still
+calls `grove` on `PATH`.
+
+If `grove` cannot start while completing, the completion shows
+`grove completion failed` with the first line of the error instead of offering
+nothing.
+
 Everything works without the wrapper too — commands print the path instead of
 jumping, so `cd "$(grove pick myrepo)"` remains available.

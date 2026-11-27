@@ -48,11 +48,34 @@ Without a TTY (`--json`, CI, or an agent), install goes to every detected
 tool without prompting.
 
 ```bash
-grove skills list        # where the skills are installed, which tools were detected
+grove skills list        # where each skill is installed, and whether it is up to date
 grove skills uninstall   # remove them
 ```
 
-Re-run `grove skills install` after upgrading grove to pick up skill changes.
+### After upgrading grove
+
+Run `grove skills install` again. Once grove's skills are installed somewhere,
+install without `--target` updates the tools that already have them, without
+the tool picker or the auto mode question, and adds any skill the new version
+introduced. A tool detected since then is named rather than installed into;
+add it with `--target`. While skills are behind, other grove commands end with
+a one-line reminder.
+
+grove records a hash of each skill it writes in `~/.config/grove/skills.json`,
+which is how it tells the two kinds of difference apart:
+
+| Status | Meaning | What `grove skills install` does |
+| --- | --- | --- |
+| up to date | Same as this version's skill | Nothing |
+| outdated | Still what grove wrote, and this version has a newer one | Replace it |
+| edited locally | Changed since grove wrote it | Leave it, with a warning; `--force` replaces it |
+
+A skill installed by a grove older than these records has no hash. If it
+differs from this version's, it counts as outdated and is replaced.
+
+The shell integration needs no update: the line in your startup file runs
+`grove shell-init` each time a shell starts, so every new terminal has the
+installed version's script.
 
 ## Claude Code auto mode
 

@@ -9,6 +9,14 @@ import { emitJson, log, success, warn, info, getOutputContext } from '../core/ou
 import { confirm, multiselect, canPrompt } from '../core/prompts.js'
 import { WtError } from '../core/errors.js'
 import { applyAutoModeHints, type AutoModeHintsResult } from '../core/claude-settings.js'
+import {
+  hashSkill,
+  loadSkillState,
+  saveSkillState,
+  skillStatus,
+  type SkillState,
+  type SkillStatus,
+} from '../core/skill-state.js'
 
 /**
  * Agent tools we know how to install skills for.
@@ -191,17 +199,158 @@ async function chooseTargets(
   return chosen.map(resolveOne)
 }
 
-async function listTemplates(): Promise<string[]> {
+async function listBundledSkillNames(): Promise<string[]> {
+  return [...(await bundledSkills()).keys()]
+}
+
+/** Bundled skill name to its SKILL.md content. */
+async function bundledSkills(): Promise<Map<string, string>> {
   const dir = templatesDir()
   const entries = await readdir(dir, { withFileTypes: true })
-  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  const skills = new Map<string, string>()
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    skills.set(entry.name, await readFile(join(dir, entry.name, 'SKILL.md'), 'utf8'))
+  }
+  return skills
+}
+
+interface SkillCheck {
+  name: string
+  path: string
+  status: SkillStatus
+}
+
+async function checkTarget(
+  target: ResolvedTarget,
+  bundled: Map<string, string>,
+  state: SkillState,
+): Promise<SkillCheck[]> {
+  return Promise.all(
+    [...bundled].map(async ([name, content]) => {
+      const file = join(target.dir, name, 'SKILL.md')
+      const installed = existsSync(file) ? await readFile(file, 'utf8') : undefined
+      return {
+        name,
+        path: join(target.dir, name),
+        status: skillStatus(installed, content, state.installed[file]?.hash),
+      }
+    }),
+  )
+}
+
+type SkillAction = 'install' | 'update' | 'current' | 'overwrite' | 'skip'
+
+function actionFor(status: SkillStatus, force: boolean): SkillAction {
+  switch (status) {
+    case 'missing':
+      return 'install'
+    case 'outdated':
+      return 'update'
+    case 'current':
+      return 'current'
+    case 'modified':
+      return force ? 'overwrite' : 'skip'
+  }
+}
+
+/** Known tools that already have at least one grove skill installed. */
+function targetsWithSkills(names: string[]): ResolvedTarget[] {
+  return Object.keys(TARGETS)
+    .map(resolveOne)
+    .filter((target) => names.some((name) => existsSync(join(target.dir, name, 'SKILL.md'))))
+}
+
+/**
+ * Labels of tools whose grove skills an update would change: one is older
+ * than this grove's, or this grove ships a skill the tool doesn't have yet.
+ * Skills the user edited don't count, since an update leaves them alone.
+ */
+export async function outdatedSkillTargets(): Promise<string[]> {
+  const bundled = await bundledSkills()
+  const state = await loadSkillState()
+  const labels: string[] = []
+  for (const target of targetsWithSkills([...bundled.keys()])) {
+    const checks = await checkTarget(target, bundled, state)
+    if (checks.some((check) => check.status === 'outdated' || check.status === 'missing')) {
+      labels.push(TARGETS[target.name]?.label ?? target.name)
+    }
+  }
+  return labels
 }
 
 interface InstallReport {
   target: string
   dir: string
+  /** Newly installed. */
   installed: string[]
+  /** Replaced with this grove's version: outdated, or edited and forced. */
+  updated: string[]
+  /** Already the same as this grove's version. */
+  current: string[]
+  /** Edited locally, so left alone without --force. */
   skipped: string[]
+}
+
+/**
+ * Bring each target's skills to this grove's versions, and record what was
+ * written so a later run can tell an outdated skill from an edited one.
+ */
+async function installSkills(
+  targets: ResolvedTarget[],
+  options: { force?: boolean } = {},
+): Promise<InstallReport[]> {
+  const bundled = await bundledSkills()
+  const state = await loadSkillState()
+  const reports: InstallReport[] = []
+  for (const target of targets) {
+    const report: InstallReport = {
+      target: target.name,
+      dir: target.dir,
+      installed: [],
+      updated: [],
+      current: [],
+      skipped: [],
+    }
+    for (const check of await checkTarget(target, bundled, state)) {
+      const content = bundled.get(check.name)!
+      const file = join(check.path, 'SKILL.md')
+      const action = actionFor(check.status, options.force ?? false)
+      if (action === 'skip') {
+        report.skipped.push(check.name)
+        continue
+      }
+      if (action === 'current') {
+        report.current.push(check.name)
+      } else {
+        await mkdir(check.path, { recursive: true })
+        await writeFile(file, content, 'utf8')
+        ;(action === 'install' ? report.installed : report.updated).push(check.name)
+      }
+      state.installed[file] = { hash: hashSkill(content) }
+    }
+    reports.push(report)
+  }
+  await saveSkillState(state)
+  return reports
+}
+
+function reportInstall(reports: InstallReport[]): void {
+  for (const report of reports) {
+    const label = TARGETS[report.target]?.label ?? report.target
+    for (const name of report.installed) {
+      success(`${pc.cyan(name)} → ${label} ${pc.dim(`(${report.dir})`)}`)
+    }
+    for (const name of report.updated) {
+      success(`Updated ${pc.cyan(name)} for ${label}`)
+    }
+    if (report.current.length > 0) {
+      info(`${label}: ${report.current.join(', ')} already up to date`)
+    }
+    for (const name of report.skipped) {
+      warn(`${name} for ${label} has local changes, so it was left as is (use --force to replace it)`)
+    }
+  }
 }
 
 async function runInstall(options: {
@@ -210,29 +359,34 @@ async function runInstall(options: {
   dryRun?: boolean
   claudeAutoMode?: boolean
 }): Promise<void> {
-  const source = templatesDir()
-  const targets = await chooseTargets(options.target, 'install')
-  const names = await listTemplates()
+  // Once grove's skills are installed somewhere, re-running install means
+  // "bring them up to date": no picker, no auto mode question, the same tools.
+  const existing = options.target?.length ? [] : targetsWithSkills(await listBundledSkillNames())
+  const updating = existing.length > 0
+  const targets = updating ? existing : await chooseTargets(options.target, 'install')
+  const elsewhere = updating
+    ? detectTargets().filter((name) => !existing.some((target) => target.name === name))
+    : []
 
   if (targets.length === 0) {
     log('Nothing selected.')
     return
   }
 
-  const plan = targets.map((target) => ({
-    target,
-    items: names.map((name) => {
-      const dest = join(target.dir, name)
-      const exists = existsSync(join(dest, 'SKILL.md'))
-      return {
-        name,
-        path: dest,
-        action: !exists ? 'install' : options.force ? 'overwrite' : 'skip',
-      }
-    }),
-  }))
-
   if (options.dryRun) {
+    const bundled = await bundledSkills()
+    const state = await loadSkillState()
+    const plan = await Promise.all(
+      targets.map(async (target) => ({
+        target,
+        items: (await checkTarget(target, bundled, state)).map((check) => ({
+          name: check.name,
+          path: check.path,
+          status: check.status,
+          action: actionFor(check.status, options.force ?? false),
+        })),
+      })),
+    )
     const autoMode = wantsClaude(targets) && options.claudeAutoMode !== false
       ? await applyAutoModeHints({ dryRun: true })
       : null
@@ -263,48 +417,26 @@ async function runInstall(options: {
     return
   }
 
-  const reports: InstallReport[] = []
-  for (const { target, items } of plan) {
-    const report: InstallReport = {
-      target: target.name,
-      dir: target.dir,
-      installed: [],
-      skipped: [],
-    }
-    for (const item of items) {
-      if (item.action === 'skip') {
-        report.skipped.push(item.name)
-        continue
-      }
-      await mkdir(item.path, { recursive: true })
-      const content = await readFile(join(source, item.name, 'SKILL.md'), 'utf8')
-      await writeFile(join(item.path, 'SKILL.md'), content, 'utf8')
-      report.installed.push(item.name)
-    }
-    reports.push(report)
-  }
+  const reports = await installSkills(targets, { force: options.force })
 
-  const autoMode = wantsClaude(targets)
-    ? await installAutoModeHints(options.claudeAutoMode)
-    : null
+  const autoMode =
+    wantsClaude(targets) && !(updating && options.claudeAutoMode === undefined)
+      ? await installAutoModeHints(options.claudeAutoMode)
+      : null
 
   if (getOutputContext().json) {
-    emitJson({ ok: true, targets: reports, claudeAutoMode: autoMode })
+    emitJson({ ok: true, targets: reports, notInstalled: elsewhere, claudeAutoMode: autoMode })
     return
   }
 
   log()
-  for (const report of reports) {
-    const label = TARGETS[report.target]?.label ?? report.target
-    for (const name of report.installed) {
-      success(`${pc.cyan(name)} → ${label} ${pc.dim(`(${report.dir})`)}`)
-    }
-    for (const name of report.skipped) {
-      warn(`${name} already installed for ${label} (use --force to overwrite)`)
-    }
+  reportInstall(reports)
+  if (elsewhere.length > 0) {
+    const labels = elsewhere.map((name) => TARGETS[name]?.label ?? name).join(', ')
+    info(`Also detected ${labels}. Add the skills there with \`grove skills install --target ${elsewhere.join(' ')}\`.`)
   }
   if (autoMode) reportAutoMode(autoMode)
-  if (reports.some((report) => report.installed.length > 0)) {
+  if (reports.some((report) => report.installed.length + report.updated.length > 0)) {
     log()
     info('Agents will pick these up on their next session.')
   }
@@ -357,7 +489,8 @@ function reportAutoMode(outcome: AutoModeOutcome): void {
 }
 
 async function runList(options: { target?: string[] }): Promise<void> {
-  const names = await listTemplates()
+  const bundled = await bundledSkills()
+  const state = await loadSkillState()
 
   // Listing reports on every tool we know about rather than only the ones
   // installed, so it doubles as a way to see what grove would detect.
@@ -366,15 +499,18 @@ async function runList(options: { target?: string[] }): Promise<void> {
     ? await chooseTargets(options.target, 'list')
     : Object.keys(TARGETS).map(resolveOne)
 
-  const rows = targets.map((target) => ({
-    target: target.name,
-    dir: target.dir,
-    detected: detected.has(target.name),
-    skills: names.map((name) => ({
-      name,
-      installed: existsSync(join(target.dir, name, 'SKILL.md')),
+  const rows = await Promise.all(
+    targets.map(async (target) => ({
+      target: target.name,
+      dir: target.dir,
+      detected: detected.has(target.name),
+      skills: (await checkTarget(target, bundled, state)).map((check) => ({
+        name: check.name,
+        installed: check.status !== 'missing',
+        status: check.status,
+      })),
     })),
-  }))
+  )
 
   if (getOutputContext().json) {
     emitJson({ ok: true, targets: rows })
@@ -387,20 +523,25 @@ async function runList(options: { target?: string[] }): Promise<void> {
     const presence = row.detected ? '' : pc.dim(' (not detected)')
     log(`${pc.bold(label)}${presence}  ${pc.dim(row.dir)}`)
     for (const skill of row.skills) {
-      const status = skill.installed
-        ? pc.green('installed')
-        : pc.dim('not installed')
+      const status = STATUS_LABELS[skill.status]
       log(`  ${skill.name.padEnd(14)} ${status}`)
     }
     log()
   }
 }
 
+const STATUS_LABELS: Record<SkillStatus, string> = {
+  missing: pc.dim('not installed'),
+  current: pc.green('up to date'),
+  outdated: pc.yellow('outdated, run `grove skills install`'),
+  modified: pc.yellow('edited locally'),
+}
+
 async function runUninstall(options: {
   target?: string[]
   yes?: boolean
 }): Promise<void> {
-  const names = await listTemplates()
+  const names = await listBundledSkillNames()
 
   // Only offer tools that actually have grove skills installed, so the
   // picker never lists somewhere with nothing to remove.
@@ -408,11 +549,7 @@ async function runUninstall(options: {
   if (options.target?.length) {
     targets = await chooseTargets(options.target, 'remove')
   } else {
-    const withSkills = Object.keys(TARGETS)
-      .map(resolveOne)
-      .filter((target) =>
-        names.some((name) => existsSync(join(target.dir, name, 'SKILL.md'))),
-      )
+    const withSkills = targetsWithSkills(names)
     if (withSkills.length > 1 && canPrompt()) {
       const chosen = await multiselect(
         'Which tools should grove remove skills from?',
@@ -460,10 +597,12 @@ async function runUninstall(options: {
     return
   }
 
+  const state = await loadSkillState()
   const removed: { target: string; dir: string; skills: string[] }[] = []
   for (const entry of plan) {
     for (const name of entry.present) {
       await rm(join(entry.target.dir, name), { recursive: true, force: true })
+      delete state.installed[join(entry.target.dir, name, 'SKILL.md')]
     }
     removed.push({
       target: entry.target.name,
@@ -471,6 +610,8 @@ async function runUninstall(options: {
       skills: entry.present,
     })
   }
+
+  await saveSkillState(state)
 
   if (getOutputContext().json) {
     emitJson({ ok: true, removed })

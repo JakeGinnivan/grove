@@ -1,5 +1,15 @@
 # @jakeginnivan/grove
 
+## 0.16.0
+
+### Minor Changes
+
+- 8548f31: New `grove upgrade` command upgrades grove to the latest release with the tool that installed it: npm, pnpm or Yarn classic. It checks the npm registry first and does nothing when grove is already current. Afterwards it confirms the grove on `PATH` really is the new version, and warns when the package manager finished without upgrading. `grove upgrade --check` only reports whether a newer release exists. For a grove it can't place, such as a checkout or a project dependency, it stops and lists the upgrade command for each tool.
+
+### Patch Changes
+
+- 6fcea0f: Security: bash Tab completion no longer runs branch names as shell code. It passed branch, worktree and repo names through `compgen -W`, which expands `$(...)` and backticks, and git allows both in branch names. Anyone who could push a branch to a repo you cloned could run commands on your machine when you pressed Tab after `wt checkout <repo>`. Completions are now filtered without expansion and escaped when inserted. PowerShell completions are now single-quoted when they hold special characters, so accepting one can't run it either. `grove shell-init --name` now accepts only a plain command name.
+
 ## 0.15.0
 
 ### Minor Changes

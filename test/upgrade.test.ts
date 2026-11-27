@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { detectInstall, isNewer, locateInstall, PACKAGE_NAME } from '../src/core/upgrade.js'
+import { detectInstall, isNewer, isVersion, locateInstall, PACKAGE_NAME, quoteForCmd } from '../src/core/upgrade.js'
 import { runCli } from './helpers/sandbox.js'
 import { it } from './helpers/fixtures.js'
 import { expectError } from './helpers/grove.js'
@@ -74,6 +74,28 @@ describe('locateInstall', () => {
   })
 })
 
+describe('isVersion', () => {
+  plainIt('accepts versions and refuses anything that could carry terminal escapes', () => {
+    expect(isVersion('0.15.0')).toBe(true)
+    expect(isVersion('1.0.0-next.1+build.5')).toBe(true)
+    expect(isVersion('0.15.0\u001b]0;pwned\u0007')).toBe(false)
+    expect(isVersion('0.15.0 && rm -rf ~')).toBe(false)
+    expect(isVersion('latest')).toBe(false)
+  })
+})
+
+describe('quoteForCmd', () => {
+  plainIt('quotes arguments cmd.exe would split or interpret', () => {
+    expect(quoteForCmd(['install', '--prefix', 'C:\\Users\\Jo Smith\\npm', 'a&b']))
+      .toEqual(['install', '--prefix', '"C:\\Users\\Jo Smith\\npm"', '"a&b"'])
+  })
+
+  plainIt('refuses what cmd.exe expands even inside quotes', () => {
+    expect(() => quoteForCmd(['C:\\%PATH%'])).toThrow(/safely/)
+    expect(() => quoteForCmd(['a"b'])).toThrow(/safely/)
+  })
+})
+
 describe('isNewer', () => {
   plainIt('compares numerically, not as strings', () => {
     expect(isNewer('0.15.0', '0.14.0')).toBe(true)
@@ -123,6 +145,12 @@ describe('grove upgrade', () => {
     expect(result.json()).toMatchObject({ ok: true, latest: '999.0.0', upgraded: false })
   })
 
+  it('refuses a registry answer that is not a version', async ({ sandbox }) => {
+    latest = '9.9.9\u001b]0;pwned\u0007'
+    const result = await runCli(['upgrade', '--json'], sandbox, { npm_config_registry: registry })
+    expectError(result, 'registry_error')
+  })
+
   it('refuses to guess for a checkout that is not a global install', async ({ sandbox }) => {
     latest = '999.0.0'
     const result = await runCli(['upgrade', '--json'], sandbox, { npm_config_registry: registry })
@@ -147,7 +175,7 @@ describe('grove upgrade', () => {
     const bin = join(root, 'fake-bin')
     const record = join(root, 'npm-args')
     await mkdir(bin)
-    await writeFile(join(bin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\necho installed-by-fake-npm\n`)
+    await writeFile(join(bin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\npwd -P > '${record}.cwd'\necho installed-by-fake-npm\n`)
     await writeFile(join(bin, 'grove'), `#!/bin/sh\necho ${versionAfter}\n`)
     await chmod(join(bin, 'npm'), 0o755)
     await chmod(join(bin, 'grove'), 0o755)
@@ -170,6 +198,8 @@ describe('grove upgrade', () => {
     expect(result).toMatchObject({ ok: true, method: 'npm', latest: '999.0.0', installed: '999.0.0', upgraded: true })
     expect((await readFile(record, 'utf8')).trim().split('\n'))
       .toEqual(['install', '--global', '--prefix', prefix, `${PACKAGE_NAME}@latest`])
+    // From home, not the caller's directory, whose config could steer it.
+    expect((await readFile(`${record}.cwd`, 'utf8')).trim()).toBe(realpathSync(sandbox.root))
   })
 
   // A package manager with a minimum release age exits 0 without upgrading

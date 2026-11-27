@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -7,7 +8,7 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 import { emitJson, getOutputContext, info, log, success, warn } from '../core/output.js'
 import { WtError } from '../core/errors.js'
-import { fetchLatestVersion, isNewer, locateInstall, UPGRADE_HINT } from '../core/upgrade.js'
+import { fetchLatestVersion, isNewer, isVersion, locateInstall, quoteForCmd, UPGRADE_HINT } from '../core/upgrade.js'
 import { hasInstalledSkills } from './skills.js'
 
 const execFileAsync = promisify(execFile)
@@ -89,14 +90,27 @@ export function upgradeCommand(currentVersion: string): Command {
     })
 }
 
+/**
+ * Child processes run from the home directory, not wherever grove was started.
+ * Yarn reads config files from the directory it runs in, a version manager's
+ * shim picks the tool from that directory's config, and on Windows cmd.exe
+ * runs a matching npm.cmd or grove.cmd from the current directory before
+ * searching PATH. Any of those would let a cloned repo choose what runs.
+ */
+const SAFE_CWD = homedir()
+
+const WINDOWS = process.platform === 'win32'
+
 /** What `grove --version` prints for the grove on PATH, or null if there is none. */
 async function versionOnPath(): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync('grove', ['--version'], {
-      shell: process.platform === 'win32',
+      cwd: SAFE_CWD,
+      shell: WINDOWS,
       timeout: 15_000,
     })
-    return stdout.trim() || null
+    const version = stdout.trim()
+    return isVersion(version) ? version : null
   } catch {
     return null
   }
@@ -108,10 +122,11 @@ async function versionOnPath(): Promise<string | null> {
  */
 function run(program: string, args: string[], json: boolean): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(program, args, {
+    const child = spawn(program, WINDOWS ? quoteForCmd(args) : args, {
+      cwd: SAFE_CWD,
       stdio: ['inherit', json ? process.stderr : 'inherit', 'inherit'],
       // npm, pnpm and yarn are .cmd shims on Windows, which only a shell runs.
-      shell: process.platform === 'win32',
+      shell: WINDOWS,
     })
     child.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') {

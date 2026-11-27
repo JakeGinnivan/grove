@@ -116,6 +116,31 @@ export function isNewer(a: string, b: string): boolean {
   return left.pre === undefined && right.pre !== undefined
 }
 
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
+
+export function isVersion(value: string): boolean {
+  return value.length <= 64 && VERSION_PATTERN.test(value)
+}
+
+/**
+ * Arguments for `spawn` with `shell: true` on Windows, where cmd.exe parses
+ * the joined command line. Node joins arguments with spaces and quotes none of
+ * them, so a prefix such as C:\Users\Jo Smith\AppData\Roaming\npm would
+ * split in two. Inside double quotes cmd.exe still expands %VAR% and a quote
+ * ends the quoting, so an argument holding either is refused, not escaped.
+ */
+export function quoteForCmd(args: string[]): string[] {
+  return args.map((arg) => {
+    if (/["%\r\n]/.test(arg)) {
+      throw new WtError(`grove can't pass ${JSON.stringify(arg)} safely through cmd.exe.`, {
+        code: 'unsafe_argument',
+        hint: 'Run the upgrade command yourself.',
+      })
+    }
+    return arg === '' || /[\s&|<>^(),;=!]/.test(arg) ? `"${arg}"` : arg
+  })
+}
+
 /**
  * The version the registry tags `latest`. Honours npm_config_registry, which
  * npm, pnpm and yarn all set for scripts they run and which users set to
@@ -143,8 +168,10 @@ export async function fetchLatestVersion(): Promise<string> {
     })
   }
   const body = (await response.json()) as { version?: unknown }
-  if (typeof body.version !== 'string') {
-    throw new WtError(`The npm registry's answer for grove's latest version has no version.`, {
+  // The version is printed to the terminal, and the registry can be any
+  // server npm_config_registry names, so anything but a version is refused.
+  if (typeof body.version !== 'string' || !isVersion(body.version)) {
+    throw new WtError(`The npm registry's answer for grove's latest version has no valid version.`, {
       code: 'registry_error',
       hint: url,
     })
